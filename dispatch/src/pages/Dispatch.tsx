@@ -26,6 +26,7 @@ interface State {
   input: string
   typing: boolean
   intake: boolean
+  coached: boolean
   phase: 'idle' | 'proposed'
   weekendOT: boolean
   denied: string[]
@@ -36,6 +37,10 @@ interface State {
   coachOpen: boolean
   reqOpen: boolean
   chartOpen: boolean
+  hoverDay: number | null
+  hoverStage: string | null
+  hoverReq: string | null
+  hoverRow: string | null
   coachSel: Record<string, string>
   coachStatus: Record<string, CoachStatus>
   sessions: Session[]
@@ -55,12 +60,18 @@ export default class Dispatch extends React.Component<{}, State> {
   requests: RequestRow[] = []
   backlog: Backlog = { A: 0, R: 0, S: 0 }
   coaching: CoachingSignal[] = []
+  _anim: Record<string, { target: number; from: number; cur: number; start: number; dur: number }> = {}
+  _animRaf: number | null = null
+  _prevRisk: number | undefined
+  _pulseUntil = 0
+  _pulseN = 0
 
   state: State = {
     ready: false,
     input: '',
     typing: false,
     intake: false,
+    coached: false,
     phase: 'idle',
     weekendOT: false,
     denied: [],
@@ -71,6 +82,10 @@ export default class Dispatch extends React.Component<{}, State> {
     coachOpen: true,
     reqOpen: true,
     chartOpen: true,
+    hoverDay: null,
+    hoverStage: null,
+    hoverReq: null,
+    hoverRow: null,
     coachSel: {},
     coachStatus: {},
     sessions: [],
@@ -107,6 +122,34 @@ export default class Dispatch extends React.Component<{}, State> {
   componentDidUpdate() {
     const el = this.chatEl.current
     if (el) el.scrollTop = el.scrollHeight
+  }
+
+  componentWillUnmount() {
+    if (this._animRaf) cancelAnimationFrame(this._animRaf)
+  }
+
+  // KPI count-up: eases the displayed number toward its target on every change.
+  anim(key: string, target: number, dur = 650): number {
+    const a = this._anim[key]
+    if (!a || a.target !== target) {
+      this._anim[key] = { target, from: a ? a.cur : 0, cur: a ? a.cur : 0, start: performance.now(), dur }
+      if (!this._animRaf) {
+        const tick = () => {
+          const now = performance.now()
+          let active = false
+          Object.values(this._anim).forEach((o) => {
+            const t = Math.min(1, (now - o.start) / o.dur)
+            o.cur = o.from + (o.target - o.from) * (1 - Math.pow(1 - t, 3))
+            if (t < 1) active = true
+            else o.cur = o.target
+          })
+          this._animRaf = active ? requestAnimationFrame(tick) : null
+          this.forceUpdate()
+        }
+        this._animRaf = requestAnimationFrame(tick)
+      }
+    }
+    return Math.round(this._anim[key].cur)
   }
 
   reqById(id: string) { return this.requests.find((r) => r.id === id)! }
@@ -328,7 +371,7 @@ export default class Dispatch extends React.Component<{}, State> {
           pairs.join('\n\n') +
           '\n\nReview them in the Coaching pairings panel — accept, swap the coach, or dismiss. Accepted pairs book as 1-hour in-person sessions that come out of both schedules.'
           : 'No open coaching signals this week.'
-        this.setState((s) => ({ typing: false, messages: [...s.messages, { role: 'ai', text }] }))
+        this.setState((s) => ({ typing: false, coached: true, messages: [...s.messages, { role: 'ai', text }] }))
       } else {
         this.setState((s) => ({
           typing: false,
@@ -379,11 +422,17 @@ export default class Dispatch extends React.Component<{}, State> {
     const schedImgs = proposed ? r!.batches.filter((b) => b.stage === 'A').reduce((n, b) => n + b.imgs, 0) : 0
     const riskCount = proposed ? this.requests.filter((q) => r!.reqResults[q.id].slack < 1).length : 0
     const blTotal = this.backlog.A + this.backlog.R + this.backlog.S
+    // Pulse the AT RISK number whenever the count goes up; vary the duration so the animation restarts.
+    if (proposed) {
+      if (this._prevRisk !== undefined && riskCount > this._prevRisk) { this._pulseN += 1; this._pulseUntil = Date.now() + 1000 }
+      this._prevRisk = riskCount
+    } else this._prevRisk = undefined
+    const riskAnim = this._pulseUntil && Date.now() < this._pulseUntil ? 'dispatchRiskPulse ' + (900 + (this._pulseN % 2)) + 'ms cubic-bezier(0.2,0.8,0.2,1)' : 'none'
     const kpiRows = [
-      { label: 'INCOMING VOLUME', value: s.intake ? totImg.toLocaleString() : '—', sub: s.intake ? totStr + ' structures · 5 requests · Jul 10–18' : 'Awaiting intake — tell the assistant', color: 'var(--fg)' },
-      { label: 'TEAM SUPPLY', value: this.analysts.filter((a) => a.status === 'active').length + ' active', sub: blTotal.toLocaleString() + ' backlog imgs reserved first', color: 'var(--fg)' },
-      { label: 'SCHEDULED', value: proposed ? Math.round(schedImgs).toLocaleString() + ' / ' + totImg.toLocaleString() : '—', sub: proposed ? Math.round(acceptedImgs).toLocaleString() + ' accepted so far' : 'Ask the assistant to schedule', color: proposed && schedImgs >= totImg - 5 ? 'var(--sev-low)' : 'var(--fg)' },
-      { label: 'AT RISK', value: proposed ? String(riskCount) : '—', sub: proposed ? (riskCount ? 'requests with <1 day slack' : 'all requests have slack') : 'Appears after scheduling', color: proposed ? (riskCount ? 'var(--sev-high)' : 'var(--sev-low)') : 'var(--fg)' },
+      { delay: '0ms', anim: 'none', label: 'INCOMING VOLUME', value: s.intake ? this.anim('kTot', totImg).toLocaleString() : '—', sub: s.intake ? totStr + ' structures · 5 requests · Jul 10–18' : 'Awaiting intake — tell the assistant', color: 'var(--fg)' },
+      { delay: '60ms', anim: 'none', label: 'TEAM SUPPLY', value: this.anim('kAct', this.analysts.filter((a) => a.status === 'active').length) + ' active', sub: blTotal.toLocaleString() + ' backlog imgs reserved first', color: 'var(--fg)' },
+      { delay: '120ms', anim: 'none', label: 'SCHEDULED', value: proposed ? this.anim('kSched', Math.round(schedImgs)).toLocaleString() + ' / ' + totImg.toLocaleString() : '—', sub: proposed ? Math.round(acceptedImgs).toLocaleString() + ' accepted so far' : 'Ask the assistant to schedule', color: proposed && schedImgs >= totImg - 5 ? 'var(--sev-low)' : 'var(--fg)' },
+      { delay: '180ms', anim: riskAnim, label: 'AT RISK', value: proposed ? String(this.anim('kRisk', riskCount)) : '—', sub: proposed ? (riskCount ? 'requests with <1 day slack' : 'all requests have slack') : 'Appears after scheduling', color: proposed ? (riskCount ? 'var(--sev-high)' : 'var(--sev-low)') : 'var(--fg)' },
     ]
 
     // ---- Requests strip ----
@@ -400,7 +449,7 @@ export default class Dispatch extends React.Component<{}, State> {
         const rr = r!.reqResults[q.id]
         if (rr.etaIdx === null) { slackLabel = 'Overflow'; slackBg = 'var(--sev-critical-bg)'; slackColor = 'var(--sev-critical)' }
         else if (rr.slack < 0) { slackLabel = -rr.slack + 'd late'; slackBg = 'var(--sev-critical-bg)'; slackColor = 'var(--sev-critical)' }
-        else if (rr.slack === 0) { slackLabel = 'Zero slack'; slackBg = 'var(--sev-high-bg)'; slackColor = 'var(--sev-high)' }
+        else if (rr.slack === 0) { slackLabel = 'No slack'; slackBg = 'var(--sev-high-bg)'; slackColor = 'var(--sev-high)' }
         else { slackLabel = 'ETA ' + days[rr.etaIdx].label; slackBg = 'var(--sev-low-bg)'; slackColor = 'var(--sev-low)' }
       }
       return {
@@ -409,6 +458,9 @@ export default class Dispatch extends React.Component<{}, State> {
         volume: q.images.toLocaleString() + ' imgs · ' + q.structures + ' structures · ' + q.org.replace(/_/g, ' '),
         window: 'Lands ' + days[q.arrIdx].label + ' → due ' + (days[q.dueIdx] ? days[q.dueIdx].label : 'Jul 25'),
         slackLabel, slackBg, slackColor,
+        hovered: s.hoverReq === q.id,
+        enter: () => this.setState({ hoverReq: q.id }),
+        leave: () => this.setState((st) => (st.hoverReq === q.id ? { hoverReq: null } : null)),
       }
     })
 
@@ -441,8 +493,16 @@ export default class Dispatch extends React.Component<{}, State> {
     const chartCols = days.map((dy, i) => {
       const segs = (['CO', 'S', 'R', 'A', 'BL'] as const)
         .filter((k) => demand[i][k] > 0.2)
-        .map((k) => ({ pct: ((demand[i][k] / maxV) * 100).toFixed(1) + '%', color: STAGE_COLORS[k], title: (k === 'BL' ? 'Backlog' : k === 'CO' ? 'Coaching session — 1h × coach + analyst' : STAGE_NAMES[k]) + ': ' + demand[i][k].toFixed(1) + 'h' }))
+        .map((k) => ({
+          pct: ((demand[i][k] / maxV) * 100).toFixed(1) + '%', color: STAGE_COLORS[k],
+          delay: i * 25 + 'ms',
+          opacity: s.hoverStage && k !== s.hoverStage ? 0.15 : 1,
+          tLabel: k === 'BL' ? 'Backlog' : k === 'CO' ? 'Coaching' : STAGE_NAMES[k],
+          tVal: demand[i][k].toFixed(1) + 'h',
+          title: (k === 'BL' ? 'Backlog' : k === 'CO' ? 'Coaching session — 1h × coach + analyst' : STAGE_NAMES[k]) + ': ' + demand[i][k].toFixed(1) + 'h',
+        }))
       const tot = segTot(demand[i])
+      const hovered = s.hoverDay === i
       return {
         label: dy.short, labelColor: dy.isWeekend ? 'var(--fg-subtle)' : 'var(--fg-muted)',
         bg: dy.isWeekend ? 'var(--surface-sunken)' : 'var(--surface-subtle)',
@@ -450,16 +510,29 @@ export default class Dispatch extends React.Component<{}, State> {
         capPct: ((capTotalIdle[i] / maxV) * 100).toFixed(1) + '%',
         capColor: tot > capTotalIdle[i] + 0.5 ? 'var(--sev-critical)' : 'var(--fg-muted)',
         capTitle: 'Available: ' + capTotalIdle[i].toFixed(0) + 'h',
+        enter: () => this.setState({ hoverDay: i }),
+        leave: () => this.setState((st) => (st.hoverDay === i ? { hoverDay: null } : null)),
+        colOpacity: s.hoverDay === null || hovered ? 1 : 0.5,
+        showTip: hovered && segs.length > 0,
+        tipTitle: dy.label + (dy.isWeekend ? ' · weekend' : ''),
+        tipRows: segs.map((sg) => ({ color: sg.color, label: sg.tLabel, val: sg.tVal })),
+        tipFoot: 'Available: ' + capTotalIdle[i].toFixed(0) + 'h' + (tot > capTotalIdle[i] + 0.5 ? ' — breached' : ''),
         title: dy.label + ' — demand ' + tot.toFixed(0) + 'h vs ' + capTotalIdle[i].toFixed(0) + 'h available',
       }
     })
     const chartLegend = [
-      { color: BACKLOG_COLOR, label: 'Backlog burn-down' },
-      { color: '#2FBFA8', label: 'Annotation' },
-      { color: '#E07BB2', label: 'Review' },
-      { color: '#E0B84D', label: 'Secondary review' },
+      { k: 'BL', color: BACKLOG_COLOR, label: 'Backlog burn-down' },
+      { k: 'A', color: '#2FBFA8', label: 'Annotation' },
+      { k: 'R', color: '#E07BB2', label: 'Review' },
+      { k: 'S', color: '#E0B84D', label: 'Secondary review' },
     ]
-    if (s.sessions.length) chartLegend.push({ color: STAGE_COLORS.CO, label: 'Coaching session (1h × both calendars)' })
+    if (s.sessions.length) chartLegend.push({ k: 'CO', color: STAGE_COLORS.CO, label: 'Coaching session (1h × both calendars)' })
+    const legendRows = chartLegend.map((l) => ({
+      ...l,
+      enter: () => this.setState({ hoverStage: l.k }),
+      leave: () => this.setState((st) => (st.hoverStage === l.k ? { hoverStage: null } : null)),
+      op: s.hoverStage && s.hoverStage !== l.k ? 0.4 : 1,
+    }))
 
     // ---- Batches ----
     const batchRows = !proposed
@@ -535,20 +608,26 @@ export default class Dispatch extends React.Component<{}, State> {
         const ai = this.analysts.indexOf(a)
         const cells = days.map((dy, d) => {
           const maxH = Math.max(a.hours, 0.1)
-          const segs: { pct: string; color: string; title: string }[] = []
+          const segs: { pct: string; color: string; title: string; req?: string; delay?: string; opacity?: number }[] = []
           const res = r!.reserve[ai][d]
           if (res > 0.1) segs.push({ pct: Math.min(100, (res / maxH) * 100).toFixed(0) + '%', color: BACKLOG_COLOR, title: 'Backlog: ' + res.toFixed(1) + 'h' })
           const byReq: Record<string, number> = {}
           r!.draws.forEach((dr) => { if (dr.aid === a.id && dr.day === d) byReq[dr.req] = (byReq[dr.req] || 0) + dr.hours })
-          Object.entries(byReq).forEach(([req, h]) => segs.push({ pct: Math.min(100, (h / maxH) * 100).toFixed(0) + '%', color: REQ_COLORS[req], title: 'Req ' + req + ': ' + h.toFixed(1) + 'h' }))
+          Object.entries(byReq).forEach(([req, h]) => segs.push({ req, pct: Math.min(100, (h / maxH) * 100).toFixed(0) + '%', color: REQ_COLORS[req], title: 'Req ' + req + ': ' + h.toFixed(1) + 'h' }))
           s.sessions.forEach((sn) => {
             if (sn.day !== d || (sn.strugglerId !== a.id && sn.coachId !== a.id)) return
             const other = this.aById(sn.strugglerId === a.id ? sn.coachId : sn.strugglerId)
             segs.push({ pct: Math.min(100, (1 / maxH) * 100).toFixed(0) + '%', color: 'var(--volt-green)', title: 'Coaching session: 1h with ' + (other ? other.name : '') })
           })
+          segs.forEach((sg) => { sg.delay = d * 16 + 'ms'; sg.opacity = s.hoverReq ? (sg.req === s.hoverReq ? 1 : 0.15) : 1 })
           return { segs, bg: dy.isWeekend ? 'var(--surface-sunken)' : 'var(--surface-subtle)', title: a.name + ' · ' + dy.label }
         })
-        return { name: a.name, sub: (a.status === 'pto' ? 'PTO → Jul 16 · ' : '') + a.role + ' · ' + a.hours + 'h/day', cells }
+        return {
+          name: a.name, sub: (a.status === 'pto' ? 'PTO → Jul 16 · ' : '') + a.role + ' · ' + a.hours + 'h/day', cells,
+          rowOpacity: s.hoverRow && s.hoverRow !== a.id ? 0.45 : 1,
+          enter: () => this.setState({ hoverRow: a.id }),
+          leave: () => this.setState((st) => (st.hoverRow === a.id ? { hoverRow: null } : null)),
+        }
       })
 
     // ---- Analyst board ----
@@ -581,6 +660,7 @@ export default class Dispatch extends React.Component<{}, State> {
         utilPct: (proposed ? Math.min(100, util * 100) : 0).toFixed(0) + '%',
         utilColor: util > 0.92 ? 'var(--sev-high)' : 'var(--cobalt-blue)',
         utilLabel: proposed ? Math.round(loadH) + 'h / ' + Math.round(avail) + 'h' : '— / ' + Math.round(avail) + 'h',
+        loadTitle: proposed ? loadH.toFixed(1) + 'h load / ' + Math.round(avail) + 'h available · ' + Math.round(util * 100) + '% utilized' : Math.round(avail) + 'h available in window — no load yet',
         status: a.status === 'pto' ? 'PTO → Jul 16' : 'Active',
         statusBg: a.status === 'pto' ? 'var(--surface-subtle)' : 'var(--sev-low-bg)',
         statusColor: a.status === 'pto' ? 'var(--fg-subtle)' : 'var(--sev-low)',
@@ -600,7 +680,7 @@ export default class Dispatch extends React.Component<{}, State> {
       accept: () => void; dismiss: () => void; book: () => void
     }
     const pairRows: PairRow[] = []
-    if (SHOW_COACHING) this.coaching.forEach((c) => {
+    if (SHOW_COACHING && s.coached) this.coaching.forEach((c) => {
       const status = s.coachStatus[c.id] || 'pending'
       if (status === 'dismissed') return
       const cands = this.rankCoaches(c, proposed ? r : null)
@@ -663,7 +743,9 @@ export default class Dispatch extends React.Component<{}, State> {
       })
     })
     const showCoachingSection = SHOW_COACHING && this.coaching.length > 0
-    const coachCaption = 'Matching engine — strength in the weak metric · specialty overlap · timezone · spare capacity · max 3 pairs/week'
+    const coachCaption = s.coached
+      ? 'Matching engine — strength in the weak metric · specialty overlap · timezone · spare capacity · max 3 pairs/week'
+      : 'Signals queued — ask the assistant who should coach whom this week to run the matching engine'
 
     // ---- Chat ----
     const messageRows = s.messages.map((m) => ({
@@ -680,7 +762,7 @@ export default class Dispatch extends React.Component<{}, State> {
       if (!s.weekendOT) presets.push({ kind: 'ot', label: 'Authorize weekend overtime for the surge' })
       presets.push({ kind: 'risk', label: "What's at risk right now?" })
     }
-    presets.push({ kind: 'coach', label: 'Who should coach whom this week?' })
+    if (!s.coached) presets.push({ kind: 'coach', label: 'Who should coach whom this week?' })
     if (proposed && s.weekendOT) presets.push({ kind: 'risk', label: 'Re-check deadlines' })
 
     const anyPending = pendingCount > 0
@@ -753,9 +835,9 @@ export default class Dispatch extends React.Component<{}, State> {
             {/* KPI strip */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 16 }}>
               {kpiRows.map((k, i) => (
-                <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 4, animation: `dispatchFadeUp 400ms cubic-bezier(0.2,0.8,0.2,1) ${k.delay} backwards` }}>
                   <span style={{ fontSize: 11, letterSpacing: '0.08em', color: 'var(--fg-subtle)', whiteSpace: 'nowrap' }}>{k.label}</span>
-                  <span style={{ fontSize: 26, fontWeight: 500, letterSpacing: '-0.01em', color: k.color }}>{k.value}</span>
+                  <span style={{ fontSize: 26, fontWeight: 500, letterSpacing: '-0.01em', color: k.color, transformOrigin: 'left center', animation: k.anim }}>{k.value}</span>
                   <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{k.sub}</span>
                 </div>
               ))}
@@ -771,7 +853,7 @@ export default class Dispatch extends React.Component<{}, State> {
                 {s.reqOpen && (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(215px, 1fr))', gap: 12 }}>
                     {requestRows.map((rq) => (
-                      <div key={rq.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div key={rq.id} onMouseEnter={rq.enter} onMouseLeave={rq.leave} style={{ background: 'var(--surface)', border: `1px solid ${rq.hovered ? rq.color : 'var(--border)'}`, borderRadius: 14, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8, transition: 'border-color 200ms cubic-bezier(0.2,0.8,0.2,1)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span style={{ width: 9, height: 9, borderRadius: 999, background: rq.color }}></span>
                           <span style={{ fontSize: 13.5, fontWeight: 500 }}>{rq.title}</span>
@@ -800,11 +882,20 @@ export default class Dispatch extends React.Component<{}, State> {
                 <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '20px 20px 14px 20px' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 170 }}>
                     {chartCols.map((c, i) => (
-                      <div key={i} style={{ flex: 1, height: '100%', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: c.bg, borderRadius: 6 }} title={c.title}>
+                      <div key={i} onMouseEnter={c.enter} onMouseLeave={c.leave} style={{ flex: 1, height: '100%', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: c.bg, borderRadius: 6, opacity: c.colOpacity, transition: 'opacity 200ms cubic-bezier(0.2,0.8,0.2,1)' }} title={c.title}>
+                        {c.showTip && (
+                          <div style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translate(-50%, -8px)', background: 'var(--surface-elevated)', border: '1px solid var(--border-strong)', borderRadius: 10, padding: '10px 12px', zIndex: 6, display: 'flex', flexDirection: 'column', gap: 4, minWidth: 158, boxShadow: '0 10px 28px rgba(0,0,0,0.5)', pointerEvents: 'none', animation: 'dispatchFadeUp 160ms cubic-bezier(0.2,0.8,0.2,1)' }}>
+                            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap' }}>{c.tipTitle}</span>
+                            {c.tipRows.map((t, j) => (
+                              <span key={j} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--fg-muted)', whiteSpace: 'nowrap' }}><span style={{ width: 8, height: 8, borderRadius: 2, background: t.color, flexShrink: 0 }}></span>{t.label}<span style={{ marginLeft: 'auto', paddingLeft: 12, fontVariantNumeric: 'tabular-nums', color: 'var(--fg)' }}>{t.val}</span></span>
+                            ))}
+                            <span style={{ fontSize: 11, color: 'var(--fg-subtle)', whiteSpace: 'nowrap', borderTop: '1px solid var(--border)', paddingTop: 5, marginTop: 2 }}>{c.tipFoot}</span>
+                          </div>
+                        )}
                         {c.segs.map((sg, j) => (
-                          <div key={j} style={{ height: sg.pct, background: sg.color, borderRadius: 2, margin: '0 3px 1px 3px' }} title={sg.title}></div>
+                          <div key={j} style={{ height: sg.pct, background: sg.color, borderRadius: 2, margin: '0 3px 1px 3px', opacity: sg.opacity, animation: `dispatchBarGrow 520ms cubic-bezier(0.2,0.8,0.2,1) ${sg.delay} backwards`, transition: 'height 360ms cubic-bezier(0.2,0.8,0.2,1), opacity 200ms cubic-bezier(0.2,0.8,0.2,1)' }} title={sg.title}></div>
                         ))}
-                        <div style={{ position: 'absolute', left: 0, right: 0, bottom: c.capPct, height: 0, borderTop: `2px dashed ${c.capColor}` }} title={c.capTitle}></div>
+                        <div style={{ position: 'absolute', left: 0, right: 0, bottom: c.capPct, height: 0, borderTop: `2px dashed ${c.capColor}`, transition: 'bottom 360ms cubic-bezier(0.2,0.8,0.2,1)' }} title={c.capTitle}></div>
                       </div>
                     ))}
                   </div>
@@ -814,8 +905,8 @@ export default class Dispatch extends React.Component<{}, State> {
                     ))}
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                    {chartLegend.map((l, i) => (
-                      <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-muted)' }}><span style={{ width: 10, height: 10, borderRadius: 3, background: l.color }}></span>{l.label}</span>
+                    {legendRows.map((l, i) => (
+                      <span key={i} onMouseEnter={l.enter} onMouseLeave={l.leave} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-muted)', cursor: 'default', opacity: l.op, transition: 'opacity 200ms cubic-bezier(0.2,0.8,0.2,1)' }}><span style={{ width: 10, height: 10, borderRadius: 3, background: l.color }}></span>{l.label}</span>
                     ))}
                     <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-muted)' }}><span style={{ width: 14, borderTop: '2px dashed var(--fg-muted)' }}></span>Available hours (after PTO, weekends, backlog reserve)</span>
                   </div>
@@ -859,7 +950,7 @@ export default class Dispatch extends React.Component<{}, State> {
                                   <span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>{p.structLabel}</span>
                                 </div>
                               </div>
-                              <div style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--fg-muted)' }}>{p.reason}</div>
+                              <div style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--fg-muted)', textWrap: 'pretty' }}>{p.reason}</div>
                               {p.whyOpen && (
                                 <div style={{ background: 'var(--surface-subtle)', borderRadius: 10, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 5 }}>
                                   {p.whyLines.map((w, i) => (<span key={i} style={{ fontSize: 12, color: 'var(--fg-muted)', fontVariantNumeric: 'tabular-nums' }}>{w}</span>))}
@@ -906,14 +997,14 @@ export default class Dispatch extends React.Component<{}, State> {
                       {ganttDays.map((d, i) => (<span key={i} style={{ flex: 1, textAlign: 'center', fontSize: 10, color: d.color }}>{d.label}</span>))}
                     </div>
                     {ganttRows.map((g, gi) => (
-                      <div key={gi} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>
+                      <div key={gi} onMouseEnter={g.enter} onMouseLeave={g.leave} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4, opacity: g.rowOpacity, transition: 'opacity 200ms cubic-bezier(0.2,0.8,0.2,1)' }}>
                         <div style={{ width: 128, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
                           <span style={{ fontSize: 12.5, fontWeight: 500 }}>{g.name}</span>
                           <span style={{ fontSize: 10.5, color: 'var(--fg-subtle)' }}>{g.sub}</span>
                         </div>
                         {g.cells.map((c, ci) => (
                           <div key={ci} style={{ flex: 1, height: 26, borderRadius: 5, background: c.bg, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', overflow: 'hidden' }} title={c.title}>
-                            {c.segs.map((sg, si) => (<div key={si} style={{ height: sg.pct, background: sg.color }} title={sg.title}></div>))}
+                            {c.segs.map((sg, si) => (<div key={si} style={{ height: sg.pct, background: sg.color, opacity: sg.opacity, animation: `dispatchBarGrow 480ms cubic-bezier(0.2,0.8,0.2,1) ${sg.delay} backwards`, transition: 'height 360ms cubic-bezier(0.2,0.8,0.2,1), opacity 200ms cubic-bezier(0.2,0.8,0.2,1)' }} title={sg.title}></div>))}
                           </div>
                         ))}
                       </div>
@@ -951,8 +1042,8 @@ export default class Dispatch extends React.Component<{}, State> {
                         <span style={{ fontSize: 12.5, color: 'var(--fg-muted)', fontVariantNumeric: 'tabular-nums' }}>{a.rate}</span>
                         <span style={{ fontSize: 12.5, color: a.accColor, fontVariantNumeric: 'tabular-nums' }}>{a.acc}</span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <div style={{ flex: 1, height: 7, borderRadius: 999, background: 'var(--surface-sunken)', overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: a.utilPct, background: a.utilColor, borderRadius: 999, transition: 'width 200ms cubic-bezier(0.2,0.8,0.2,1)' }}></div>
+                          <div title={a.loadTitle} className="dc-load" style={{ flex: 1, height: 7, borderRadius: 999, background: 'var(--surface-sunken)', overflow: 'hidden', transition: 'height 160ms cubic-bezier(0.2,0.8,0.2,1)' }}>
+                            <div style={{ height: '100%', width: a.utilPct, background: a.utilColor, borderRadius: 999, animation: 'dispatchBarGrowW 520ms cubic-bezier(0.2,0.8,0.2,1) backwards', transition: 'width 360ms cubic-bezier(0.2,0.8,0.2,1)' }}></div>
                           </div>
                           <span style={{ fontSize: 11.5, color: 'var(--fg-subtle)', fontVariantNumeric: 'tabular-nums', width: 76, flexShrink: 0 }}>{a.utilLabel}</span>
                         </div>
@@ -975,7 +1066,39 @@ export default class Dispatch extends React.Component<{}, State> {
 
                 {s.coachOpen && (
                   <>
-                    {pairRows.length === 0 && (
+                    {/* Skeleton placeholders — filled in when the assistant is asked who should coach whom */}
+                    {!s.coached && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }}>
+                        {this.coaching.map((c) => (
+                          <div key={c.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 13 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <span className="dc-skel" style={{ width: 34, height: 34, borderRadius: 999, flexShrink: 0 }}></span>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+                                <span className="dc-skel" style={{ width: 130, height: 11 }}></span>
+                                <span className="dc-skel" style={{ width: 190, height: 8 }}></span>
+                              </div>
+                              <span className="dc-skel" style={{ width: 46, height: 16, margin: '0 16px', flexShrink: 0 }}></span>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, alignItems: 'flex-end' }}>
+                                <span className="dc-skel" style={{ width: 120, height: 11 }}></span>
+                                <span className="dc-skel" style={{ width: 170, height: 8 }}></span>
+                              </div>
+                              <span className="dc-skel" style={{ width: 34, height: 34, borderRadius: 999, flexShrink: 0 }}></span>
+                            </div>
+                            <span className="dc-skel" style={{ width: '72%', height: 9 }}></span>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
+                              {[0, 1, 2, 3].map((j) => (
+                                <div key={j} style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
+                                  <span className="dc-skel" style={{ width: 52, height: 7 }}></span>
+                                  <span className="dc-skel" style={{ width: '100%', height: 5 }}></span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {s.coached && pairRows.length === 0 && (
                       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 20px', fontSize: 13, color: 'var(--fg-muted)' }}>All coaching signals are resolved for this week — new pairings appear here if the daily history flags a trend.</div>
                     )}
 
@@ -1009,7 +1132,7 @@ export default class Dispatch extends React.Component<{}, State> {
                                 <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
                                   <span style={{ fontSize: 9, letterSpacing: '0.08em', color: 'var(--fg-subtle)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.label}</span>
                                   <div style={{ height: 5, borderRadius: 999, background: 'var(--surface-sunken)', overflow: 'hidden' }}>
-                                    <div style={{ height: '100%', width: f.width, background: 'var(--cobalt-blue)', borderRadius: 999, transition: 'width 200ms cubic-bezier(0.2,0.8,0.2,1)' }}></div>
+                                    <div style={{ height: '100%', width: f.width, background: 'var(--cobalt-blue)', borderRadius: 999, animation: 'dispatchBarGrowW 520ms cubic-bezier(0.2,0.8,0.2,1) backwards', transition: 'width 360ms cubic-bezier(0.2,0.8,0.2,1)' }}></div>
                                   </div>
                                 </div>
                               ))}
@@ -1040,7 +1163,7 @@ export default class Dispatch extends React.Component<{}, State> {
 
             <div ref={this.chatEl} style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
               {messageRows.map((m, i) => (
-                <div key={i} style={{ alignSelf: m.align as any, maxWidth: '90%', padding: '11px 15px', borderRadius: m.radius, background: m.bg, color: m.color, fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-line' }}>{m.text}</div>
+                <div key={i} style={{ alignSelf: m.align as any, maxWidth: '90%', padding: '11px 15px', borderRadius: m.radius, background: m.bg, color: m.color, fontSize: 13.5, lineHeight: 1.5, textWrap: 'pretty', whiteSpace: 'pre-line' }}>{m.text}</div>
               ))}
               {s.typing && (
                 <div style={{ alignSelf: 'flex-start', padding: '12px 16px', borderRadius: '14px 14px 14px 4px', background: 'var(--surface-elevated)', display: 'flex', gap: 5 }}>

@@ -7,3 +7,16 @@
 .dc-send:hover { background: var(--cobalt-fill-hover) !important; }
 .dc-link:hover { background: var(--surface-subtle) !important; }
 .dc-pill-hover:hover { background: var(--surface-subtle) !important; color: var(--fg) !important; }
+
+/* Skeleton placeholder bars (coaching section before the matching engine runs). */
+@keyframes dcShimmer { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+.dc-skel { display: inline-block; background: var(--surface-subtle); border-radius: 999px; animation: dcShimmer 1.6s ease-in-out infinite; }
+
+/* Entrance / update animations from the Dispatch v2 design comp. */
+@keyframes dispatchBarGrow { from { height: 0; } }
+@keyframes dispatchBarGrowW { from { width: 0; } }
+@keyframes dispatchFadeUp { from { opacity: 0; transform: translateY(8px); } }
+@keyframes dispatchRiskPulse { 0% { transform: scale(1); } 35% { transform: scale(1.09); } 100% { transform: scale(1); } }
+
+/* Analyst board load bar thickens under the cursor. */
+.dc-load:hover { height: 10px !important; }
