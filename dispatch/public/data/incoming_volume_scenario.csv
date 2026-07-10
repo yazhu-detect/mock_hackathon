@@ -1,0 +1,6 @@
+incoming_request_id,arrival_date,org_name,powerline_name,structure_count,image_count,priority,due_date,notes
+601,2026-07-10,maritime_electric,T1,210,1480,urgent,2026-07-14,Post-storm reshoot; regulator deadline. Bulk arrives day 1.
+602,2026-07-11,maritime_electric,Y115,85,560,high,2026-07-17,Scheduled quarterly inspection.
+603,2026-07-13,nova_power,NP-12,60,415,normal,2026-07-21,Routine batch; corrosion-heavy.
+604,2026-07-15,atlantic_grid,AG-Tx4,120,940,high,2026-07-20,New contract; structure ids labelled 'AG-Tx4 - NNN'.
+605,2026-07-18,maritime_electric,L204,45,300,normal,2026-07-25,Trailing follow-up to req 601.

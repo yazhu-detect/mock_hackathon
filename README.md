@@ -1,3 +1,29 @@
+# Running the app — Threadr Dispatch
+
+The deliverable lives in [`dispatch/`](dispatch/) — a frontend-only React + Vite + TypeScript app.
+No backend, no API key: the assistant is scripted, but the schedule/assignments/coaching are all
+computed live from the CSVs in `data/`.
+
+**Prerequisites:** Node.js 18+ and npm (`node -v`).
+
+```bash
+cd dispatch
+npm install        # first time only
+npm run dev        # then open http://localhost:5173
+```
+
+`/` is the launcher, `/dispatch` is the scheduler. **Demo flow** via the chat presets, in order:
+1. *"Here's the incoming volume…"* — parses the 5 requests; chart shows the storm surge.
+2. *"…schedule everything"* — engine runs; assignments, capacity chart, Gantt, ETAs appear.
+3. *"Authorize weekend overtime…"* — recomputes; at-risk requests recover.
+4. **Accept / Deny** a batch (deny re-plans live) · **Accept all** locks it in.
+5. *"Who needs coaching this week?"* — signals + a matched primary coach (+ specialist consult).
+
+If you regenerate data (`python3 generate_dataset.py`), refresh it: `cp data/*.csv dispatch/public/data/`.
+See [`dispatch/README.md`](dispatch/README.md) for build/preview and details.
+
+---
+
 # The problem we're solving
 
 Auto-scheduling and assigning analysts in Threadr based on incoming work volume and turnaround times.

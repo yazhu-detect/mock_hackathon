@@ -1,0 +1,201 @@
+/* =========================================================================
+   Detect Design System — colors_and_type.css
+   Source: Detect Brand Identity Guidelines (screenshots, Apr 2026)
+   ========================================================================= */
+
+/* ---------- Webfonts ---------- */
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap');
+
+/* ==========================================================================
+   1. CORE TOKENS
+   ========================================================================== */
+:root {
+  /* ---- Brand palette (from Brand Colors sheet) ---- */
+  --cobalt-blue:    #004ACB;
+  --volt-green:     #CEFF00;
+  --dark-blue:      #1C1F48;
+  --light-blue:     #E9F1F7;
+  --white:          #FFFFFF;
+  --medium-blue:    #8BA9CB;
+  --supporting-blue:#4A6A88;
+  --black:          #000000;
+
+  /* ---- Tonal extensions (derived; for app surfaces) ---- */
+  --cobalt-blue-hover: #0039A3;
+  --volt-green-hover:  #B8E600;
+  --dark-blue-hover:   #10132F;
+  --light-blue-2:      #F4F8FB;
+  --light-blue-border: #D7E3EE;
+  --dark-blue-80:      rgba(28, 31, 72, 0.80);
+  --dark-blue-50:      rgba(28, 31, 72, 0.50);
+  --dark-blue-30:      rgba(28, 31, 72, 0.30);
+  --dark-blue-10:      rgba(28, 31, 72, 0.10);
+
+  /* ---- Semantic color roles ---- */
+  --bg:          var(--white);
+  --bg-subtle:   var(--light-blue);
+  --bg-muted:    var(--light-blue-2);
+  --bg-inverse:  var(--dark-blue);
+  --bg-brand:    var(--cobalt-blue);
+
+  --fg:          var(--dark-blue);
+  --fg-muted:    var(--supporting-blue);
+  --fg-subtle:   var(--medium-blue);
+  --fg-inverse:  var(--white);
+  --fg-on-brand: var(--white);
+  --fg-on-volt:  var(--dark-blue);
+
+  --border:      var(--light-blue-border);
+  --border-strong: var(--medium-blue);
+  --border-brand:  var(--cobalt-blue);
+
+  --app-bg:           #E8EFF6;
+  --surface:          var(--white);
+  --surface-subtle:   var(--light-blue-2);
+  --surface-elevated: var(--white);
+  --surface-sunken:   var(--light-blue);
+  --surface-inverse:  var(--dark-blue);
+  --on-surface:       var(--dark-blue);
+  --focus-ring:       rgba(0, 74, 203, 0.28);
+
+  --accent:      var(--volt-green);
+  --accent-fg:   var(--dark-blue);
+
+  --success: #1F9D57;
+  --warning: #E8A317;
+  --danger:  #E5342B;
+  --info:    var(--cobalt-blue);
+
+  --sev-critical: #E5342B;
+  --sev-high:     #F2851B;
+  --sev-medium:   #F4C430;
+  --sev-low:      #1F9D57;
+  --sev-ok:       #1F9D57;
+  --sev-critical-bg: #FDECEA;
+  --sev-high-bg:     #FDF1E6;
+  --sev-medium-bg:   #FEF8E1;
+  --sev-low-bg:      #E7F6EE;
+  --delta-up-good:   #1F9D57;
+  --delta-down-bad:  #E5342B;
+  --icon-amber-bg:   #FDF1E6;
+  --icon-coral-bg:   #FDECEA;
+  --icon-blue-bg:    #E7EEFC;
+
+  --cat-transmission:    #6D3BEB;  --cat-transmission-bg: #EFE9FD;
+  --cat-subtransmission: #2A6FDB;  --cat-subtransmission-bg: #E7EEFC;
+  --cat-distribution:    #2A6FDB;  --cat-distribution-bg: #E7EEFC;
+  --cat-substation:      #1F8A5B;  --cat-substation-bg:   #E3F5EC;
+  --cat-material:        #B8860B;  --cat-material-bg:     #FBF1D8;
+
+  --access-full:        #6FB300;
+  --access-readonly:    #2A6FDB;
+  --access-planner:     #2A6FDB;
+  --access-technical:   #6D3BEB;
+  --access-operational: #E08200;
+  --access-oversight:   #E08200;
+  --access-detectonly:  #1F8A5B;
+
+  --ai-pill-bg: #14110F;
+  --ai-pill-fg: #CEFF00;
+  --validation-bg: #FEF3D6;
+  --validation-fg: #B8860B;
+
+  /* ---- Cobalt fills (defined in light too so components resolve) ---- */
+  --cobalt-fill:       var(--cobalt-blue);
+  --cobalt-fill-hover: var(--cobalt-blue-hover);
+
+  /* ==========================================================================
+     2. TYPOGRAPHY
+     ========================================================================== */
+  --font-sans:    'Instrument Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-serif:   'Instrument Serif', ui-serif, Georgia, 'Times New Roman', serif;
+  --font-mono:    ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-display: var(--font-sans);
+
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  --text-h1:      96px;
+  --text-h2:      64px;
+  --text-h3:      48px;
+  --text-h4:      40px;
+  --text-body-lg: 24px;
+  --text-body:    18px;
+  --text-button:  21px;
+  --text-sm:      15px;
+  --text-xs:      13px;
+
+  --lh-tight:  1.08;
+  --lh-snug:   1.18;
+  --lh-normal: 1.45;
+  --lh-loose:  1.6;
+
+  --tracking-tight:  -0.02em;
+  --tracking-normal: 0em;
+  --tracking-wide:   0.04em;
+
+  /* ==========================================================================
+     3. SPACING / RADIUS / ELEVATION
+     ========================================================================== */
+  --space-0: 0;   --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+  --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px;
+  --space-10: 40px; --space-12: 48px; --space-16: 64px; --space-20: 80px;
+  --space-24: 96px; --space-32: 128px;
+
+  --radius-xs: 4px; --radius-sm: 8px; --radius-md: 16px; --radius-lg: 24px;
+  --radius-xl: 30px; --radius-2xl: 40px; --radius-pill: 999px;
+
+  --border-width: 1px;
+  --border-strong-width: 1.5px;
+
+  --shadow-dot: 0 0 6px 0 rgba(0, 0, 0, 0.18);
+  --shadow-xs: 0 1px 2px rgba(28, 31, 72, 0.05);
+  --shadow-sm: 0 2px 8px rgba(28, 31, 72, 0.06);
+  --shadow-md: 0 8px 24px rgba(28, 31, 72, 0.08);
+  --shadow-lg: 0 20px 48px rgba(28, 31, 72, 0.12);
+
+  --content-max: 1200px;
+  --gutter: 24px;
+
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-out:      cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in:       cubic-bezier(0.4, 0, 1, 1);
+  --dur-fast:   120ms;
+  --dur-base:   200ms;
+  --dur-slow:   360ms;
+}
+
+/* ==========================================================================
+   4. SEMANTIC TYPE STYLES
+   ========================================================================== */
+html, body {
+  font-family: var(--font-sans);
+  color: var(--fg);
+  background: var(--bg);
+  font-size: var(--text-body);
+  line-height: var(--lh-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.h1, h1 { font-family: var(--font-display); font-weight: var(--weight-medium); font-size: var(--text-h1); line-height: var(--lh-tight); letter-spacing: var(--tracking-tight); color: var(--fg); margin: 0 0 0.3em 0; text-wrap: balance; }
+.h2, h2 { font-family: var(--font-display); font-weight: var(--weight-medium); font-size: var(--text-h2); line-height: var(--lh-tight); letter-spacing: var(--tracking-tight); color: var(--fg); margin: 0 0 0.4em 0; text-wrap: balance; }
+.h3, h3 { font-family: var(--font-display); font-weight: var(--weight-medium); font-size: var(--text-h3); line-height: var(--lh-snug); letter-spacing: -0.01em; color: var(--fg); margin: 0 0 0.5em 0; text-wrap: balance; }
+.h4, h4 { font-family: var(--font-sans); font-weight: var(--weight-medium); font-size: var(--text-h4); line-height: var(--lh-snug); color: var(--fg); margin: 0 0 0.5em 0; }
+.eyebrow { font-family: var(--font-sans); font-weight: var(--weight-medium); font-size: var(--text-sm); letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--supporting-blue); }
+p, .body { font-family: var(--font-sans); font-weight: var(--weight-regular); font-size: var(--text-body-lg); line-height: var(--lh-normal); color: var(--fg); margin: 0 0 1em 0; text-wrap: pretty; }
+.body-sm { font-size: var(--text-body); }
+.caption { font-size: var(--text-sm); color: var(--fg-muted); }
+
+.italic-accent { font-family: var(--font-serif); font-style: italic; }
+
+code, .mono { font-family: var(--font-mono); font-size: 0.94em; background: var(--light-blue-2); padding: 0.1em 0.35em; border-radius: var(--radius-xs); }
+
+/* ==========================================================================
+   5. UTILITY — Volt Green highlighter
+   ========================================================================== */
+.volt-highlight { background: var(--volt-green); color: var(--dark-blue); padding: 0 0.12em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.volt-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--volt-green); box-shadow: var(--shadow-dot); }

@@ -1,0 +1,111 @@
+/* =========================================================================
+   Detect Design System — dark-mode.css
+   ADDITIVE dark theme. Activated by [data-theme="dark"]. Import AFTER
+   colors_and_type.css.
+   ========================================================================= */
+[data-theme="dark"] {
+  --app-bg:           #141A24;
+  --surface:          #1C2433;
+  --surface-subtle:   #232E3E;
+  --surface-elevated: #2E3A4B;
+  --surface-sunken:   #0E131B;
+  --surface-inverse:  #EDF2F8;
+  --on-surface:       #EDF2F8;
+
+  --light-blue:        #232E3E;
+  --light-blue-2:      #1B2433;
+  --light-blue-border: #313D4D;
+  --medium-blue:       #7E8CA0;
+  --supporting-blue:   #B3C0D2;
+  --dark-blue:         #EDF2F8;
+  --dark-blue-hover:   #FFFFFF;
+  --dark-blue-80:      rgba(237, 242, 248, 0.80);
+  --dark-blue-50:      rgba(237, 242, 248, 0.55);
+  --dark-blue-30:      rgba(237, 242, 248, 0.32);
+  --dark-blue-10:      rgba(237, 242, 248, 0.12);
+  --white:             #1C2433;
+
+  --cobalt-blue:        #5C97FF;
+  --cobalt-blue-hover:  #7BACFF;
+  --cobalt-fill:        #2C66E6;
+  --cobalt-fill-hover:  #1F57D6;
+
+  --volt-green:        #CEFF00;
+  --volt-green-hover:  #BCEA00;
+
+  --bg:          var(--app-bg);
+  --bg-subtle:   var(--surface);
+  --bg-muted:    var(--surface-subtle);
+  --bg-inverse:  #EDF2F8;
+  --bg-brand:    var(--cobalt-fill);
+
+  --fg:          #EDF2F8;
+  --fg-muted:    #B3C0D2;
+  --fg-subtle:   #8593A6;
+  --fg-inverse:  #141A24;
+  --fg-on-brand: #FFFFFF;
+  --fg-on-volt:  #14110F;
+
+  --border:        #313D4D;
+  --border-strong: #44515F;
+  --border-brand:  var(--cobalt-blue);
+  --focus-ring:    rgba(92, 151, 255, 0.45);
+
+  --accent:      var(--volt-green);
+  --accent-fg:   #14110F;
+
+  --success: #45D08A;
+  --warning: #FFC24D;
+  --danger:  #FF6B5E;
+  --info:    var(--cobalt-blue);
+
+  --sev-critical: #FF6B5E;
+  --sev-high:     #FF9E4D;
+  --sev-medium:   #FFD24D;
+  --sev-low:      #45D08A;
+  --sev-ok:       #45D08A;
+  --sev-critical-bg: rgba(255, 107, 94, 0.16);
+  --sev-high-bg:     rgba(255, 158, 77, 0.16);
+  --sev-medium-bg:   rgba(255, 210, 77, 0.15);
+  --sev-low-bg:      rgba(69, 208, 138, 0.16);
+
+  --delta-up-good:   #45D08A;
+  --delta-down-bad:  #FF6B5E;
+  --icon-amber-bg:   rgba(255, 158, 77, 0.16);
+  --icon-coral-bg:   rgba(255, 107, 94, 0.16);
+  --icon-blue-bg:    rgba(92, 151, 255, 0.18);
+
+  --cat-transmission:    #B79CFF;  --cat-transmission-bg: rgba(141, 107, 255, 0.18);
+  --cat-subtransmission: #7DB0FF;  --cat-subtransmission-bg: rgba(92, 151, 255, 0.18);
+  --cat-distribution:    #7DB0FF;  --cat-distribution-bg: rgba(92, 151, 255, 0.18);
+  --cat-substation:      #57D49A;  --cat-substation-bg:   rgba(69, 208, 138, 0.18);
+  --cat-material:        #E8C56B;  --cat-material-bg:     rgba(212, 168, 52, 0.18);
+
+  --access-full:        #A8E04A;
+  --access-readonly:    #7DB0FF;
+  --access-planner:     #7DB0FF;
+  --access-technical:   #B79CFF;
+  --access-operational: #FFB060;
+  --access-oversight:   #FFB060;
+  --access-detectonly:  #57D49A;
+
+  --ai-pill-bg: #0A0805;
+  --ai-pill-fg: #CEFF00;
+  --validation-bg: rgba(212, 168, 52, 0.18);
+  --validation-fg: #E8C56B;
+
+  --shadow-dot: 0 0 6px 0 rgba(0, 0, 0, 0.55);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6);
+
+  color-scheme: dark;
+}
+
+[data-theme="dark"] body { background: var(--app-bg); color: var(--fg); }
+[data-theme="dark"] a { color: var(--cobalt-blue); }
+[data-theme="dark"] a:hover { color: var(--cobalt-blue-hover); }
+[data-theme="dark"] code, [data-theme="dark"] .mono { background: var(--surface-subtle); color: var(--fg); }
+[data-theme="dark"] .volt-highlight { background: var(--volt-green); color: #14110F; }
+[data-theme="dark"] ::placeholder { color: var(--fg-subtle); }

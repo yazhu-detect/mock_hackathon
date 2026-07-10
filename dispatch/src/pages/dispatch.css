@@ -1,0 +1,9 @@
+/* Hover helpers translating the design's style-hover attributes. */
+.dc-icon-btn:hover { background: var(--surface-subtle) !important; color: var(--fg) !important; }
+.dc-card-hover:hover { border-color: var(--border-strong) !important; background: var(--surface-subtle) !important; color: var(--fg) !important; }
+.dc-chip:hover { border-color: var(--cobalt-blue) !important; color: var(--cobalt-blue) !important; }
+.dc-volt:hover { background: var(--volt-green-hover) !important; }
+.dc-deny:hover { border-color: var(--danger) !important; color: var(--danger) !important; }
+.dc-send:hover { background: var(--cobalt-fill-hover) !important; }
+.dc-link:hover { background: var(--surface-subtle) !important; }
+.dc-pill-hover:hover { background: var(--surface-subtle) !important; color: var(--fg) !important; }
