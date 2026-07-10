@@ -1,0 +1,11 @@
+analyst_id,display_name,role,can_annotate,can_review,can_secondary_review,annotation_img_per_hr,review_img_per_hr,secondary_review_img_per_hr,avg_sec_per_image_annotation,avg_sec_per_image_review,accuracy_pct_not_returned,daily_capacity_hours,timezone,seniority,status,specialty
+a01,Priya Nair,analyst,True,False,False,19.0,,,189,,96.5,7.5,AST,senior,active,corrosion
+a02,Diego Ramos,analyst,True,False,False,15.0,,,240,,91.0,8.0,AST,mid,active,pole_crack
+a03,Wei Chen,analyst,True,False,False,11.0,,,327,,88.5,7.0,AST,junior,active,general
+a04,Fatima Al-Sayed,analyst,True,True,False,19.0,39.9,,189,90,94.0,7.5,AST,senior,active,insulator
+a05,Tom Bui,analyst,True,False,False,11.0,,,327,,83.0,6.0,AST,junior,active,general
+a06,Grace Okoro,analyst,True,True,False,15.0,31.5,,240,114,92.5,8.0,AST,mid,active,vegetation
+a07,Liam Murphy,analyst,True,False,False,15.0,,,240,,90.0,4.0,AST,mid,pto,pole_crack
+a08,Sara Kowalski,reviewer,True,True,False,19.0,39.9,,189,90,95.5,8.0,GMT,senior,active,corrosion
+a09,Hassan Iqbal,reviewer,True,True,True,19.0,39.9,57.0,189,90,97.0,8.0,GMT,senior,active,insulator
+a10,Kyle Anders,supervisor,True,True,True,22.0,46.2,66.0,164,78,98.0,3.0,AST,lead,active,all
