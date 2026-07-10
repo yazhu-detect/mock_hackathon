@@ -306,7 +306,7 @@ export default class Dispatch extends React.Component<{}, State> {
   }
 
   sendPrompt(kind: string, label: string) {
-    this.setState((s) => ({ messages: [...s.messages, { role: 'user', text: label }], typing: true, ...(kind === 'coach' ? { coachAsked: true } : null) }))
+    this.setState((s) => ({ messages: [...s.messages, { role: 'user', text: label }], typing: true, coachAsked: kind === 'coach' ? true : s.coachAsked }))
     setTimeout(() => {
       if (kind === 'intake') {
         const totImg = this.requests.reduce((n, q) => n + q.images, 0)
@@ -849,34 +849,6 @@ export default class Dispatch extends React.Component<{}, State> {
               ))}
             </div>
 
-            {/* Incoming requests strip */}
-            {s.intake && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <button onClick={() => this.setState((st) => ({ reqOpen: !st.reqOpen }))} style={headerBtnStyle}>
-                  {chev(s.reqOpen ? '90deg' : '0deg')}
-                  <h2 style={{ margin: 0, fontSize: 19, fontWeight: 500, letterSpacing: '-0.01em', whiteSpace: 'nowrap' }}>Incoming requests · Jul 10–18</h2>
-                </button>
-                {s.reqOpen && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(215px, 1fr))', gap: 12 }}>
-                    {requestRows.map((rq) => (
-                      <div key={rq.id} onMouseEnter={rq.enter} onMouseLeave={rq.leave} style={{ background: 'var(--surface)', border: `1px solid ${rq.hovered ? rq.color : 'var(--border)'}`, borderRadius: 14, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8, transition: 'border-color 200ms cubic-bezier(0.2,0.8,0.2,1)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ width: 9, height: 9, borderRadius: 999, background: rq.color }}></span>
-                          <span style={{ fontSize: 13.5, fontWeight: 500 }}>{rq.title}</span>
-                          <span style={{ marginLeft: 'auto', padding: '2px 9px', borderRadius: 999, background: rq.prioBg, color: rq.prioColor, fontSize: 10, fontWeight: 600, letterSpacing: '0.05em' }}>{rq.prio}</span>
-                        </div>
-                        <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{rq.volume}</div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--fg-subtle)' }}>
-                          <span>{rq.window}</span>
-                          <span style={{ marginLeft: 'auto', padding: '3px 10px', borderRadius: 999, background: rq.slackBg, color: rq.slackColor, fontSize: 11, fontWeight: 500 }}>{rq.slackLabel}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
             {/* Capacity vs demand chart */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <button onClick={() => this.setState((st) => ({ chartOpen: !st.chartOpen }))} style={headerBtnStyle}>
@@ -888,7 +860,7 @@ export default class Dispatch extends React.Component<{}, State> {
                 <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '20px 20px 14px 20px' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 170 }}>
                     {chartCols.map((c, i) => (
-                      <div key={i} onMouseEnter={c.enter} onMouseLeave={c.leave} style={{ flex: 1, height: '100%', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: c.bg, borderRadius: 6, opacity: c.colOpacity, transition: 'opacity 200ms cubic-bezier(0.2,0.8,0.2,1)' }} title={c.title}>
+                      <div key={i} onMouseEnter={c.enter} onMouseLeave={c.leave} style={{ flex: 1, height: '100%', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: c.bg, borderRadius: 6, opacity: c.colOpacity, transition: 'opacity 200ms cubic-bezier(0.2,0.8,0.2,1)' }}>
                         {c.showTip && (
                           <div style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translate(-50%, -8px)', background: 'var(--surface-elevated)', border: '1px solid var(--border-strong)', borderRadius: 10, padding: '10px 12px', zIndex: 6, display: 'flex', flexDirection: 'column', gap: 4, minWidth: 158, boxShadow: '0 10px 28px rgba(0,0,0,0.5)', pointerEvents: 'none', animation: 'dispatchFadeUp 160ms cubic-bezier(0.2,0.8,0.2,1)' }}>
                             <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg)', whiteSpace: 'nowrap' }}>{c.tipTitle}</span>
@@ -919,6 +891,65 @@ export default class Dispatch extends React.Component<{}, State> {
                 </div>
               )}
             </div>
+
+            {/* Incoming requests strip */}
+            {s.intake && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <button onClick={() => this.setState((st) => ({ reqOpen: !st.reqOpen }))} style={headerBtnStyle}>
+                  {chev(s.reqOpen ? '90deg' : '0deg')}
+                  <h2 style={{ margin: 0, fontSize: 19, fontWeight: 500, letterSpacing: '-0.01em', whiteSpace: 'nowrap' }}>Incoming requests · Jul 10–18</h2>
+                </button>
+                {s.reqOpen && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(215px, 1fr))', gap: 12 }}>
+                    {requestRows.map((rq) => (
+                      <div key={rq.id} onMouseEnter={rq.enter} onMouseLeave={rq.leave} style={{ background: 'var(--surface)', border: `1px solid ${rq.hovered ? rq.color : 'var(--border)'}`, borderRadius: 14, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8, transition: 'border-color 200ms cubic-bezier(0.2,0.8,0.2,1)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ width: 9, height: 9, borderRadius: 999, background: rq.color }}></span>
+                          <span style={{ fontSize: 13.5, fontWeight: 500 }}>{rq.title}</span>
+                          <span style={{ marginLeft: 'auto', padding: '2px 9px', borderRadius: 999, background: rq.prioBg, color: rq.prioColor, fontSize: 10, fontWeight: 600, letterSpacing: '0.05em' }}>{rq.prio}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{rq.volume}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--fg-subtle)' }}>
+                          <span>{rq.window}</span>
+                          <span style={{ marginLeft: 'auto', padding: '3px 10px', borderRadius: 999, background: rq.slackBg, color: rq.slackColor, fontSize: 11, fontWeight: 500 }}>{rq.slackLabel}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Gantt timeline */}
+            {proposed && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+                  <h2 style={{ margin: 0, fontSize: 19, fontWeight: 500, letterSpacing: '-0.01em' }}>Schedule timeline</h2>
+                  <span style={{ fontSize: 12.5, color: 'var(--fg-subtle)' }}>Cell fill = share of that analyst's day · grey = backlog burn-down</span>
+                </div>
+                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 20px', overflowX: 'auto' }}>
+                  <div style={{ minWidth: 820 }}>
+                    <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+                      <span style={{ width: 128, flexShrink: 0 }}></span>
+                      {ganttDays.map((d, i) => (<span key={i} style={{ flex: 1, textAlign: 'center', fontSize: 10, color: d.color }}>{d.label}</span>))}
+                    </div>
+                    {ganttRows.map((g, gi) => (
+                      <div key={gi} onMouseEnter={g.enter} onMouseLeave={g.leave} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4, opacity: g.rowOpacity, transition: 'opacity 200ms cubic-bezier(0.2,0.8,0.2,1)' }}>
+                        <div style={{ width: 128, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 500 }}>{g.name}</span>
+                          <span style={{ fontSize: 10.5, color: 'var(--fg-subtle)' }}>{g.sub}</span>
+                        </div>
+                        {g.cells.map((c, ci) => (
+                          <div key={ci} style={{ flex: 1, height: 26, borderRadius: 5, background: c.bg, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', overflow: 'hidden' }} title={c.title}>
+                            {c.segs.map((sg, si) => (<div key={si} style={{ height: sg.pct, background: sg.color, opacity: sg.opacity, animation: `dispatchBarGrow 480ms cubic-bezier(0.2,0.8,0.2,1) ${sg.delay} backwards`, transition: 'height 360ms cubic-bezier(0.2,0.8,0.2,1), opacity 200ms cubic-bezier(0.2,0.8,0.2,1)' }} title={sg.title}></div>))}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Proposed batches */}
             {proposed && (
@@ -989,37 +1020,6 @@ export default class Dispatch extends React.Component<{}, State> {
               </div>
             )}
 
-            {/* Gantt timeline */}
-            {proposed && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-                  <h2 style={{ margin: 0, fontSize: 19, fontWeight: 500, letterSpacing: '-0.01em' }}>Schedule timeline</h2>
-                  <span style={{ fontSize: 12.5, color: 'var(--fg-subtle)' }}>Cell fill = share of that analyst's day · grey = backlog burn-down</span>
-                </div>
-                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 20px', overflowX: 'auto' }}>
-                  <div style={{ minWidth: 820 }}>
-                    <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-                      <span style={{ width: 128, flexShrink: 0 }}></span>
-                      {ganttDays.map((d, i) => (<span key={i} style={{ flex: 1, textAlign: 'center', fontSize: 10, color: d.color }}>{d.label}</span>))}
-                    </div>
-                    {ganttRows.map((g, gi) => (
-                      <div key={gi} onMouseEnter={g.enter} onMouseLeave={g.leave} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4, opacity: g.rowOpacity, transition: 'opacity 200ms cubic-bezier(0.2,0.8,0.2,1)' }}>
-                        <div style={{ width: 128, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-                          <span style={{ fontSize: 12.5, fontWeight: 500 }}>{g.name}</span>
-                          <span style={{ fontSize: 10.5, color: 'var(--fg-subtle)' }}>{g.sub}</span>
-                        </div>
-                        {g.cells.map((c, ci) => (
-                          <div key={ci} style={{ flex: 1, height: 26, borderRadius: 5, background: c.bg, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', overflow: 'hidden' }} title={c.title}>
-                            {c.segs.map((sg, si) => (<div key={si} style={{ height: sg.pct, background: sg.color, opacity: sg.opacity, animation: `dispatchBarGrow 480ms cubic-bezier(0.2,0.8,0.2,1) ${sg.delay} backwards`, transition: 'height 360ms cubic-bezier(0.2,0.8,0.2,1), opacity 200ms cubic-bezier(0.2,0.8,0.2,1)' }} title={sg.title}></div>))}
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
             {/* Analyst board */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <button onClick={() => this.setState((st) => ({ boardOpen: !st.boardOpen }))} style={headerBtnStyle}>
@@ -1029,12 +1029,12 @@ export default class Dispatch extends React.Component<{}, State> {
               </button>
               {s.boardOpen && (
                 <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden', overflowX: 'auto' }}>
-                  <div style={{ minWidth: 860 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '200px 130px 110px 90px 1fr 90px', gap: 12, alignItems: 'center', padding: '10px 20px', borderBottom: '1px solid var(--border)', fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--fg-subtle)' }}>
+                  <div style={{ minWidth: 900 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '200px 170px 110px 90px 1fr 90px', gap: 12, alignItems: 'center', padding: '10px 20px', borderBottom: '1px solid var(--border)', fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--fg-subtle)' }}>
                       <span>ANALYST</span><span>QUALIFIED</span><span>NET RATE</span><span>ACCURACY</span><span>LOAD · JUL 10–25</span><span>STATUS</span>
                     </div>
                     {analystBoardRows.map((a) => (
-                      <div key={a.id} style={{ display: 'grid', gridTemplateColumns: '200px 130px 110px 90px 1fr 90px', gap: 12, alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
+                      <div key={a.id} style={{ display: 'grid', gridTemplateColumns: '200px 170px 110px 90px 1fr 90px', gap: 12, alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <div style={{ width: 30, height: 30, borderRadius: 999, background: 'var(--surface-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', flexShrink: 0 }}>{a.initials}</div>
                           <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -1042,8 +1042,8 @@ export default class Dispatch extends React.Component<{}, State> {
                             <span style={{ fontSize: 11, color: 'var(--fg-subtle)', whiteSpace: 'nowrap' }}>{a.sub}</span>
                           </div>
                         </div>
-                        <div style={{ display: 'flex', gap: 5 }}>
-                          {a.quals.map((q, i) => (<span key={i} style={{ padding: '2px 8px', borderRadius: 999, background: 'var(--surface-subtle)', border: '1px solid var(--border)', fontSize: 10.5, color: 'var(--fg-muted)' }}>{q}</span>))}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, minWidth: 0 }}>
+                          {a.quals.map((q, i) => (<span key={i} style={{ padding: '2px 8px', borderRadius: 999, background: 'var(--surface-subtle)', border: '1px solid var(--border)', fontSize: 10.5, color: 'var(--fg-muted)', whiteSpace: 'nowrap' }}>{q}</span>))}
                         </div>
                         <span style={{ fontSize: 12.5, color: 'var(--fg-muted)', fontVariantNumeric: 'tabular-nums' }}>{a.rate}</span>
                         <span style={{ fontSize: 12.5, color: a.accColor, fontVariantNumeric: 'tabular-nums' }}>{a.acc}</span>
@@ -1162,54 +1162,54 @@ export default class Dispatch extends React.Component<{}, State> {
           {/* CHAT PANEL — floating card that pops out of the corner bubble */}
           <div style={{ display: 'flex', minHeight: 0, minWidth: 0, overflow: 'hidden', visibility: s.chatOpen ? 'visible' : 'hidden', transition: `visibility 0s linear ${s.chatOpen ? '0ms' : '320ms'}` }}>
             <div style={{ width: 392, flexShrink: 0, boxSizing: 'border-box', padding: '16px 20px 20px 0', display: 'flex', minHeight: 0 }}>
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: '0 16px 40px rgba(0, 0, 0, 0.45)', overflow: 'hidden', transformOrigin: 'bottom right', transform: s.chatOpen ? 'none' : 'scale(0.1)', opacity: s.chatOpen ? 1 : 0, transition: 'transform 320ms cubic-bezier(0.2,0.8,0.2,1), opacity 240ms cubic-bezier(0.2,0.8,0.2,1)' }}>
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--volt-green)', boxShadow: 'var(--shadow-dot)' }}></div>
-              <span style={{ fontSize: 14, fontWeight: 500 }}>Dispatch assistant</span>
-              <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--fg-subtle)' }}>Live on Threadr data</span>
-              <button
-                onClick={() => this.setState((st) => ({ chatOpen: false, chatSeen: st.messages.length }))}
-                className="dc-icon-btn"
-                title="Close chat"
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 8, background: 'transparent', border: 'none', color: 'var(--fg-subtle)', cursor: 'pointer', flexShrink: 0 }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" {...stroke}><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
-              </button>
-            </div>
-
-            <div ref={this.chatEl} style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {messageRows.map((m, i) => (
-                <div key={i} style={{ alignSelf: m.align as any, maxWidth: '90%', padding: '11px 15px', borderRadius: m.radius, background: m.bg, color: m.color, fontSize: 13.5, lineHeight: 1.5, textWrap: 'pretty', whiteSpace: 'pre-line' }}>{m.text}</div>
-              ))}
-              {s.typing && (
-                <div style={{ alignSelf: 'flex-start', padding: '12px 16px', borderRadius: '14px 14px 14px 4px', background: 'var(--surface-elevated)', display: 'flex', gap: 5 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--fg-muted)', animation: 'dispatchPulse 1s infinite' }}></span>
-                  <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--fg-muted)', animation: 'dispatchPulse 1s infinite 0.2s' }}></span>
-                  <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--fg-muted)', animation: 'dispatchPulse 1s infinite 0.4s' }}></span>
+              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: '0 16px 40px rgba(0, 0, 0, 0.45)', overflow: 'hidden', transformOrigin: 'bottom right', transform: s.chatOpen ? 'none' : 'scale(0.1)', opacity: s.chatOpen ? 1 : 0, transition: 'transform 320ms cubic-bezier(0.2,0.8,0.2,1), opacity 240ms cubic-bezier(0.2,0.8,0.2,1)' }}>
+                <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--volt-green)', boxShadow: 'var(--shadow-dot)' }}></div>
+                  <span style={{ fontSize: 14, fontWeight: 500 }}>Dispatch assistant</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--fg-subtle)' }}>Live on Threadr data</span>
+                  <button
+                    onClick={() => this.setState((st) => ({ chatOpen: false, chatSeen: st.messages.length }))}
+                    className="dc-icon-btn"
+                    title="Close chat"
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 8, background: 'transparent', border: 'none', color: 'var(--fg-subtle)', cursor: 'pointer', flexShrink: 0 }}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" {...stroke}><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+                  </button>
                 </div>
-              )}
-            </div>
 
-            <div style={{ padding: '14px 16px 18px 16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {presets.map((q, i) => (
-                  <button key={i} onClick={() => this.sendPrompt(q.kind, q.label)} className="dc-chip" style={{ padding: '6px 13px', borderRadius: 999, background: 'var(--surface-elevated)', border: '1px solid var(--border)', color: 'var(--fg-muted)', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12, cursor: 'pointer', textAlign: 'left' }}>{q.label}</button>
-                ))}
+                <div ref={this.chatEl} style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {messageRows.map((m, i) => (
+                    <div key={i} style={{ alignSelf: m.align as any, maxWidth: '90%', padding: '11px 15px', borderRadius: m.radius, background: m.bg, color: m.color, fontSize: 13.5, lineHeight: 1.5, textWrap: 'pretty', whiteSpace: 'pre-line' }}>{m.text}</div>
+                  ))}
+                  {s.typing && (
+                    <div style={{ alignSelf: 'flex-start', padding: '12px 16px', borderRadius: '14px 14px 14px 4px', background: 'var(--surface-elevated)', display: 'flex', gap: 5 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--fg-muted)', animation: 'dispatchPulse 1s infinite' }}></span>
+                      <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--fg-muted)', animation: 'dispatchPulse 1s infinite 0.2s' }}></span>
+                      <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--fg-muted)', animation: 'dispatchPulse 1s infinite 0.4s' }}></span>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ padding: '14px 16px 18px 16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {presets.map((q, i) => (
+                      <button key={i} onClick={() => this.sendPrompt(q.kind, q.label)} className="dc-chip" style={{ padding: '6px 13px', borderRadius: 999, background: 'var(--surface-elevated)', border: '1px solid var(--border)', color: 'var(--fg-muted)', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12, cursor: 'pointer', textAlign: 'left' }}>{q.label}</button>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      value={s.input}
+                      onChange={(e) => this.setState({ input: e.target.value })}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && s.input.trim()) { this.sendPrompt('free', s.input.trim()); this.setState({ input: '' }) } }}
+                      placeholder="Ask Dispatch anything…"
+                      style={{ flex: 1, padding: '11px 16px', borderRadius: 999, background: 'var(--surface-elevated)', border: '1px solid var(--border)', color: 'var(--fg)', fontFamily: "'Instrument Sans', sans-serif", fontSize: 13.5, outline: 'none' }}
+                    />
+                    <button onClick={() => { if (s.input.trim()) { this.sendPrompt('free', s.input.trim()); this.setState({ input: '' }) } }} className="dc-send" style={{ width: 42, height: 42, borderRadius: 999, background: 'var(--cobalt-fill)', border: 'none', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                      <svg width="17" height="17" viewBox="0 0 24 24" {...stroke}><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  value={s.input}
-                  onChange={(e) => this.setState({ input: e.target.value })}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && s.input.trim()) { this.sendPrompt('free', s.input.trim()); this.setState({ input: '' }) } }}
-                  placeholder="Ask Dispatch anything…"
-                  style={{ flex: 1, padding: '11px 16px', borderRadius: 999, background: 'var(--surface-elevated)', border: '1px solid var(--border)', color: 'var(--fg)', fontFamily: "'Instrument Sans', sans-serif", fontSize: 13.5, outline: 'none' }}
-                />
-                <button onClick={() => { if (s.input.trim()) { this.sendPrompt('free', s.input.trim()); this.setState({ input: '' }) } }} className="dc-send" style={{ width: 42, height: 42, borderRadius: 999, background: 'var(--cobalt-fill)', border: 'none', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                  <svg width="17" height="17" viewBox="0 0 24 24" {...stroke}><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
-                </button>
-              </div>
-            </div>
-            </div>
             </div>
           </div>
 
