@@ -26,6 +26,7 @@ interface State {
   input: string
   typing: boolean
   intake: boolean
+  coachAsked: boolean
   coached: boolean
   phase: 'idle' | 'proposed'
   weekendOT: boolean
@@ -71,6 +72,7 @@ export default class Dispatch extends React.Component<{}, State> {
     input: '',
     typing: false,
     intake: false,
+    coachAsked: false,
     coached: false,
     phase: 'idle',
     weekendOT: false,
@@ -300,7 +302,7 @@ export default class Dispatch extends React.Component<{}, State> {
   }
 
   sendPrompt(kind: string, label: string) {
-    this.setState((s) => ({ messages: [...s.messages, { role: 'user', text: label }], typing: true }))
+    this.setState((s) => ({ messages: [...s.messages, { role: 'user', text: label }], typing: true, ...(kind === 'coach' ? { coachAsked: true } : null) }))
     setTimeout(() => {
       if (kind === 'intake') {
         const totImg = this.requests.reduce((n, q) => n + q.images, 0)
@@ -742,10 +744,10 @@ export default class Dispatch extends React.Component<{}, State> {
         book: () => this.bookSession(c, chosen.a.id),
       })
     })
-    const showCoachingSection = SHOW_COACHING && this.coaching.length > 0
+    const showCoachingSection = SHOW_COACHING && this.coaching.length > 0 && s.coachAsked
     const coachCaption = s.coached
       ? 'Matching engine — strength in the weak metric · specialty overlap · timezone · spare capacity · max 3 pairs/week'
-      : 'Signals queued — ask the assistant who should coach whom this week to run the matching engine'
+      : 'Running the matching engine against this week’s signals…'
 
     // ---- Chat ----
     const messageRows = s.messages.map((m) => ({
