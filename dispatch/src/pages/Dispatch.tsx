@@ -1160,8 +1160,8 @@ export default class Dispatch extends React.Component<{}, State> {
           </div>
 
           {/* CHAT PANEL — floating card that pops out of the corner bubble */}
-          <div style={{ display: 'flex', minHeight: 0, minWidth: 0, overflow: 'hidden', visibility: s.chatOpen ? 'visible' : 'hidden', transition: `visibility 0s linear ${s.chatOpen ? '0ms' : '320ms'}` }}>
-            <div style={{ width: 392, flexShrink: 0, boxSizing: 'border-box', padding: '16px 20px 20px 0', display: 'flex', minHeight: 0 }}>
+          <div style={{ position: 'relative', minHeight: 0, minWidth: 0, visibility: s.chatOpen ? 'visible' : 'hidden', transition: `visibility 0s linear ${s.chatOpen ? '0ms' : '320ms'}` }}>
+            <div style={{ position: 'absolute', top: 16, right: 20, bottom: 20, width: 372, display: 'flex', minHeight: 0 }}>
               <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: '0 16px 40px rgba(0, 0, 0, 0.45)', overflow: 'hidden', transformOrigin: 'bottom right', transform: s.chatOpen ? 'none' : 'scale(0.1)', opacity: s.chatOpen ? 1 : 0, transition: 'transform 320ms cubic-bezier(0.2,0.8,0.2,1), opacity 240ms cubic-bezier(0.2,0.8,0.2,1)' }}>
                 <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--volt-green)', boxShadow: 'var(--shadow-dot)' }}></div>
