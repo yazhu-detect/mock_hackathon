@@ -3,12 +3,24 @@ import { Link } from 'react-router-dom'
 import './dispatch.css'
 import { DAYS } from '../engine/days'
 import { loadDispatchData, type Analyst, type RequestRow, type Backlog } from '../data/loadCsv'
-import { schedule, hoursFor, type ScheduleResult } from '../engine/schedule'
+import { schedule, hoursFor, type ScheduleResult, type Session } from '../engine/schedule'
 import { deriveCoaching, type CoachingSignal } from '../engine/coaching'
-import { matchCoaches, computeCoachingBudget, suggestedHoursFor, placeCoaching, type CoachMatch } from '../engine/coachingMatch'
 import { REQ_COLORS, BACKLOG_COLOR, STAGE_NAMES, STAGE_COLORS, DEFAULT_SECONDARY_SAMPLE_PCT } from '../engine/constants'
 
 interface Msg { role: 'user' | 'ai'; text: string }
+type CoachStatus = 'pending' | 'accepted' | 'dismissed' | 'scheduled'
+type CoachingLayout = 'pairs' | 'board' | 'focus'
+
+// One ranked coach candidate for a coaching signal.
+interface CoachCand {
+  a: Analyst
+  fit: number
+  skill: number
+  spec: number
+  tz: number
+  cap: number
+  why: string
+}
 
 interface State {
   ready: boolean
@@ -21,14 +33,24 @@ interface State {
   decisions: Record<string, 'accepted' | 'denied'>
   expanded: Record<string, 'why' | 'structs' | null>
   openGroups: Record<string, boolean>
+  boardOpen: boolean
+  coachOpen: boolean
+  reqOpen: boolean
+  chartOpen: boolean
+  coachSel: Record<string, string>
+  coachStatus: Record<string, CoachStatus>
+  coachFocus: string | null
+  sessions: Session[]
+  coachingLayout: CoachingLayout
   messages: Msg[]
   result: ScheduleResult | null
-  coachingHoursPerDay: number
 }
 
 const SAMPLE_PCT = DEFAULT_SECONDARY_SAMPLE_PCT
 const SHOW_COACHING = true
 const days = DAYS
+const clamp = (v: number) => Math.max(0, Math.min(1, v))
+const mkInit = (n: string) => n.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()
 
 export default class Dispatch extends React.Component<{}, State> {
   chatEl = React.createRef<HTMLDivElement>()
@@ -48,9 +70,17 @@ export default class Dispatch extends React.Component<{}, State> {
     decisions: {},
     expanded: {},
     openGroups: {},
+    boardOpen: true,
+    coachOpen: true,
+    reqOpen: true,
+    chartOpen: true,
+    coachSel: {},
+    coachStatus: {},
+    coachFocus: null,
+    sessions: [],
+    coachingLayout: 'pairs',
     messages: [],
     result: null,
-    coachingHoursPerDay: 0,
   }
 
   componentDidMount() {
@@ -88,24 +118,114 @@ export default class Dispatch extends React.Component<{}, State> {
   aById(id: string) { return this.analysts.find((a) => a.id === id)! }
 
   runSchedule(weekendOT: boolean, denied: string[]): ScheduleResult {
-    return schedule(this.analysts, this.requests, this.backlog, weekendOT, denied, SAMPLE_PCT)
+    return schedule(this.analysts, this.requests, this.backlog, weekendOT, denied, SAMPLE_PCT, this.state.sessions)
   }
 
-  // Coaching draws only from leftover/idle capacity, so it never moves a deadline;
-  // changing the hours just re-places into slack (no reschedule).
-  setCoaching(h: number) {
-    const hours = Math.max(0, Math.min(4, Math.round(h * 2) / 2))
-    const src = this.state.result ?? this.runSchedule(this.state.weekendOT, this.state.denied)
-    const matches = matchCoaches(this.analysts, src, this.coaching)
-    const plan = placeCoaching(src, this.analysts, matches, hours)
-    const menteeCount = new Set(matches.map((m) => m.learnerId)).size
-    const note =
-      hours === 0
-        ? 'Cleared the dedicated coaching time — nothing reserved.'
-        : plan.overflowHours > 1
-          ? `Reserved ~${Math.round(plan.reservedTotal)}h of dedicated coaching for ${menteeCount} analysts, drawn from idle capacity — client deadlines untouched. Your mentors are near-full through the surge, so most sessions land Jul 14+; bump the hours further or add overtime to fit more.`
-          : `Reserved ~${Math.round(plan.reservedTotal)}h of dedicated coaching for ${menteeCount} analysts, drawn from idle late-window capacity — every client deadline stays intact.`
-    this.setState((s) => ({ coachingHoursPerDay: hours, messages: [...s.messages, { role: 'ai', text: note }] }))
+  // ---------- COACH MATCHING ----------
+  // Rank qualified, un-flagged, active analysts as coaches for one signal:
+  // strength in the weak metric, specialty overlap, timezone, spare capacity.
+  rankCoaches(sig: CoachingSignal, r: ScheduleResult | null): CoachCand[] {
+    const st = this.aById(sig.id)
+    if (!st) return []
+    const flagged = new Set(this.coaching.map((c) => c.id))
+    return this.analysts
+      .filter((a) => a.id !== st.id && a.status === 'active' && !flagged.has(a.id))
+      .map((a) => {
+        const ai = this.analysts.indexOf(a)
+        const skill = sig.kind === 'acc' ? clamp((a.acc - 89) / 9) : clamp((a.rateA - 10) / 12)
+        const spec = a.specialty === 'all' ? 0.9 : a.specialty === st.specialty ? 1 : st.specialty === 'general' ? 0.6 : 0.25
+        const tz = a.tz === st.tz ? 1 : 0.3
+        let avail = 0
+        days.forEach((_, d) => (avail += hoursFor(a, d, this.state.weekendOT, this.state.sessions)))
+        let load = 0
+        if (r) {
+          load = r.reserve[ai].reduce((n, v) => n + v, 0)
+          r.draws.forEach((dr) => { if (dr.aid === a.id) load += dr.hours })
+        }
+        const spare = Math.max(0, avail - load)
+        const cap = r ? clamp(avail > 0 ? spare / avail : 0) : clamp(a.hours / 8)
+        const fit = 0.35 * skill + 0.25 * spec + 0.2 * tz + 0.2 * cap
+        const specTxt = a.specialty === 'all' ? 'covers all defect classes' : a.specialty === st.specialty ? 'same ' + a.specialty.replace(/_/g, ' ') + ' specialty' : a.specialty.replace(/_/g, ' ') + ' specialist'
+        const tzTxt = a.tz === st.tz ? 'same ' + a.tz + ' hours' : 'partial overlap (' + a.tz + ')'
+        const why = (sig.kind === 'acc' ? a.acc.toFixed(1) + '% first-pass' : a.rateA.toFixed(0) + ' img/hr annotation pace') + ' · ' + specTxt + ' · ' + tzTxt + ' · ' + (r ? Math.round(spare) + 'h spare in window' : a.hours + 'h/day capacity')
+        return { a, fit, skill, spec, tz, cap, why }
+      })
+      .sort((x, y) => y.fit - x.fit)
+      .slice(0, 4)
+  }
+
+  // First weekday where both learner and coach still have ≥1h free.
+  findSlot(strugglerId: string, coachId: string): number | null {
+    const st = this.aById(strugglerId)
+    const co = this.aById(coachId)
+    const sti = this.analysts.indexOf(st)
+    const coi = this.analysts.indexOf(co)
+    const r = this.state.result
+    for (let d = 1; d < days.length; d++) {
+      if (days[d].isWeekend) continue
+      const a = r ? r.cap[sti][d] : hoursFor(st, d, this.state.weekendOT, this.state.sessions)
+      const b = r ? r.cap[coi][d] : hoursFor(co, d, this.state.weekendOT, this.state.sessions)
+      if (a >= 1 && b >= 1) return d
+    }
+    for (let d = 1; d < days.length; d++) {
+      if (!days[d].isWeekend && hoursFor(st, d, this.state.weekendOT, this.state.sessions) >= 1 && hoursFor(co, d, this.state.weekendOT, this.state.sessions) >= 1) return d
+    }
+    return null
+  }
+
+  slotLabel(d: number | null, strugglerId: string, coachId: string): string | null {
+    if (d === null || d === undefined) return null
+    const st = this.aById(strugglerId)
+    const co = this.aById(coachId)
+    return days[d].label + (st.tz === co.tz ? ' · 2:00 PM ' + st.tz : ' · 11:00 AM AST / 3:00 PM GMT')
+  }
+
+  pairAccept(sig: CoachingSignal, chosen: CoachCand) {
+    const d = this.findSlot(sig.id, chosen.a.id)
+    const slot = this.slotLabel(d, sig.id, chosen.a.id)
+    this.setState((s) => ({
+      coachStatus: { ...s.coachStatus, [sig.id]: 'accepted' },
+      messages: [...s.messages, { role: 'user', text: 'Approve ' + chosen.a.name.split(' ')[0] + ' → ' + sig.name.split(' ')[0] + ' pairing' }],
+      typing: true,
+    }))
+    setTimeout(() => {
+      this.setState((s) => ({
+        typing: false,
+        messages: [...s.messages, { role: 'ai', text: 'Locked in — ' + chosen.a.name + ' coaches ' + sig.name + ' on ' + (sig.kind === 'acc' ? 'first-pass accuracy' : 'pace') + '. ' + (slot ? 'Next hour they’re both free: ' + slot + '. Book it from the panel and I’ll carve it out of both schedules.' : 'No mutual free hour in this window yet — deny a batch or authorize weekend OT to open one.') }],
+      }))
+    }, 700)
+  }
+
+  pairDismiss(sig: CoachingSignal) {
+    this.setState((s) => ({
+      coachStatus: { ...s.coachStatus, [sig.id]: 'dismissed' },
+      messages: [...s.messages, { role: 'ai', text: 'Dismissed the ' + sig.name.split(' ')[0] + ' signal — I’ll re-flag it if the trend continues into next week.' }],
+    }))
+  }
+
+  bookSession(sig: CoachingSignal, coachId: string) {
+    const d = this.findSlot(sig.id, coachId)
+    const co = this.aById(coachId)
+    if (d === null) {
+      this.setState((s) => ({ messages: [...s.messages, { role: 'ai', text: 'No hour where both ' + sig.name.split(' ')[0] + ' and ' + co.name.split(' ')[0] + ' are free in this window — free up capacity first.' }] }))
+      return
+    }
+    const label = this.slotLabel(d, sig.id, coachId)
+    const session: Session = { sigId: sig.id, strugglerId: sig.id, coachId, day: d, label }
+    this.setState((s) => ({
+      sessions: [...s.sessions, session],
+      coachStatus: { ...s.coachStatus, [sig.id]: 'scheduled' },
+      messages: [...s.messages, { role: 'user', text: 'Book the ' + co.name.split(' ')[0] + ' → ' + sig.name.split(' ')[0] + ' session' }],
+      typing: true,
+    }))
+    setTimeout(() => {
+      const intro = 'Booked ' + label + ' — 1h in person, ' + co.name + ' coaching ' + sig.name + ' on ' + (sig.kind === 'acc' ? 'first-pass accuracy' : 'pace') + '. The hour is blocked on both calendars and deducted from scheduler capacity.'
+      if (this.state.result) {
+        this.runAndStore(this.state.weekendOT, this.state.denied, this.state.decisions, (result) => this.describeResult(result, intro + ' Recomputed the plan around it:', this.state.weekendOT))
+      } else {
+        this.setState((s) => ({ typing: false, messages: [...s.messages, { role: 'ai', text: intro + ' When I draft the schedule, it’s already carved out.' }] }))
+      }
+    }, 800)
   }
 
   runAndStore(
@@ -199,40 +319,20 @@ export default class Dispatch extends React.Component<{}, State> {
         }
         this.setState((s) => ({ typing: false, messages: [...s.messages, { role: 'ai', text }] }))
       } else if (kind === 'coach') {
-        const base = this.runSchedule(this.state.weekendOT, this.state.denied)
-        const matches = matchCoaches(this.analysts, base, this.coaching)
-        const budget = computeCoachingBudget(base, this.analysts, new Set(matches.map((m) => m.primaryId)))
-        const suggested = matches.reduce((n, m) => n + suggestedHoursFor(base, this.analysts, m), 0)
-        let text: string
-        if (!matches.length && !this.coaching.length) text = 'No significant accuracy or pace drift in the last week.'
-        else {
-          const pairings = matches
-            .map((m) => {
-              const weak =
-                m.learnerSpecialty === 'general' || m.learnerSpecialty === 'all' || m.focusDefects.length >= 4
-                  ? 'all defect types (no specialty yet)'
-                  : m.focusDefects.map((d) => d.replace(/_/g, ' ')).join(', ')
-              const consult = m.consult ? ` Consult ${m.consult.coachName} on ${m.consult.defect.replace(/_/g, ' ')}.` : ''
-              return `${m.learnerName} — needs help on ${weak} → primary coach ${m.primaryName} (${m.reason}).${consult}`
-            })
-            .join('\n\n')
-          let budgetLine: string
-          if (!budget.feasible)
-            budgetLine =
-              'Coaching budget right now: 0h — some requests are still at risk, so every hour is committed to client work. Clear the deadlines first (authorize weekend overtime) and I’ll open coaching capacity.'
-          else {
-            const opens =
-              budget.deferredFromIdx != null && budget.deferredFromIdx > 0
-                ? ` Capacity opens up from ${days[budget.deferredFromIdx].label} once the surge clears.`
-                : ''
-            budgetLine = `Coaching budget: ~${Math.round(budget.totalHours)}h of mentor time free once all deadlines are safe.${opens} A suggested ~1h/day per analyst needs ${suggested}h — ${suggested <= budget.totalHours ? 'fits inside the budget' : 'exceeds it, so stagger it or add overtime'}. Use the coaching stepper to reserve it and I’ll show any deadline impact.`
-          }
-          text =
-            'Coaching plan — one primary coach per analyst who needs support, matched on defect specialty and review capacity:\n\n' +
-            pairings +
-            '\n\n' +
-            budgetLine
-        }
+        const rr = this.state.result
+        const pairs = this.coaching
+          .filter((c) => (this.state.coachStatus[c.id] || 'pending') !== 'dismissed')
+          .map((c) => {
+            const cands = this.rankCoaches(c, rr)
+            if (!cands.length) return c.name + ' — flagged (' + (c.kind === 'acc' ? 'accuracy dip' : 'pace drift') + '), but no qualified coach is free this window.'
+            const top = cands.find((x) => x.a.id === this.state.coachSel[c.id]) || cands[0]
+            return top.a.name + ' → ' + c.name + ' (' + Math.round(top.fit * 100) + '% fit, ' + (c.kind === 'acc' ? 'accuracy dip' : 'pace drift') + '): ' + top.why + '.'
+          })
+        const text = pairs.length
+          ? 'Matched this week’s signals against the roster — scored on strength in the weak metric, specialty overlap, timezone, and spare capacity:\n\n' +
+            pairs.join('\n\n') +
+            '\n\nReview them in the Coaching pairings panel — accept, swap the coach, or dismiss. Accepted pairs book as 1-hour in-person sessions that come out of both schedules.'
+          : 'No open coaching signals this week.'
         this.setState((s) => ({ typing: false, messages: [...s.messages, { role: 'ai', text }] }))
       } else {
         this.setState((s) => ({
@@ -277,6 +377,7 @@ export default class Dispatch extends React.Component<{}, State> {
     const proposed = s.phase === 'proposed' && !!r
     const totImg = this.requests.reduce((n, q) => n + q.images, 0)
     const totStr = this.requests.reduce((n, q) => n + q.structures, 0)
+    const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.75, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
 
     // ---- KPIs ----
     const acceptedImgs = proposed ? r!.batches.filter((b) => b.stage === 'A' && s.decisions[b.key] === 'accepted').reduce((n, b) => n + b.imgs, 0) : 0
@@ -316,32 +417,20 @@ export default class Dispatch extends React.Component<{}, State> {
       }
     })
 
-    // ---- Coaching matching + budget (computed early; used by chart + coaching section) ----
-    // Matches + budget come from the coaching-free schedule so they're stable and
-    // available even before the user clicks "schedule everything".
-    const baseline = this.runSchedule(s.weekendOT, s.denied)
-    const matches: CoachMatch[] = matchCoaches(this.analysts, baseline, this.coaching)
-    const primaryIds = new Set(matches.map((m) => m.primaryId))
-    const budget = computeCoachingBudget(baseline, this.analysts, primaryIds)
-    const suggestedTotal = matches.reduce((n, m) => n + suggestedHoursFor(baseline, this.analysts, m), 0)
-    // Overlay dedicated coaching into leftover capacity (no reschedule; never moves a deadline).
-    const coachingPlan = placeCoaching(r ?? baseline, this.analysts, matches, s.coachingHoursPerDay)
-    const reservedTotal = coachingPlan.reservedTotal
-
     // ---- Chart ----
-    let chartCols: any[] = []
-    let chartCaption = ''
+    // Capacity line ignores coaching sessions (they show as demand, not lost supply).
     const capTotalIdle = days.map((_, i) => this.analysts.reduce((n, a) => n + hoursFor(a, i, s.weekendOT), 0))
+    let chartCaption = ''
     let demand: { BL: number; A: number; R: number; S: number; CO: number }[]
     if (proposed) {
       chartCaption = 'Scheduled hours per day, stacked by stage — recomputes on every accept/deny'
       demand = days.map((_, d) => {
         const seg = { BL: 0, A: 0, R: 0, S: 0, CO: 0 }
         r!.reserve.forEach((row) => (seg.BL += row[d]))
-        coachingPlan.coachReserve.forEach((row) => (seg.CO += row[d]))
         r!.draws.forEach((dr) => { if (dr.day === d) seg[dr.stage] += dr.hours })
         return seg
       })
+      s.sessions.forEach((sn) => { if (demand[sn.day]) demand[sn.day].CO += 2 })
     } else {
       chartCaption = s.intake
         ? 'Naive demand: hours needed if each request were worked on its arrival day — the problem, visualized'
@@ -354,10 +443,10 @@ export default class Dispatch extends React.Component<{}, State> {
     }
     const segTot = (x: { BL: number; A: number; R: number; S: number; CO: number }) => x.BL + x.A + x.R + x.S + x.CO
     const maxV = Math.max(...days.map((_, i) => Math.max(capTotalIdle[i], segTot(demand[i]))), 1) * 1.1
-    chartCols = days.map((dy, i) => {
-      const segs = (['S', 'R', 'A', 'CO', 'BL'] as const)
+    const chartCols = days.map((dy, i) => {
+      const segs = (['CO', 'S', 'R', 'A', 'BL'] as const)
         .filter((k) => demand[i][k] > 0.2)
-        .map((k) => ({ pct: ((demand[i][k] / maxV) * 100).toFixed(1) + '%', color: STAGE_COLORS[k], title: (k === 'BL' ? 'Backlog' : STAGE_NAMES[k]) + ': ' + demand[i][k].toFixed(1) + 'h' }))
+        .map((k) => ({ pct: ((demand[i][k] / maxV) * 100).toFixed(1) + '%', color: STAGE_COLORS[k], title: (k === 'BL' ? 'Backlog' : k === 'CO' ? 'Coaching session — 1h × coach + analyst' : STAGE_NAMES[k]) + ': ' + demand[i][k].toFixed(1) + 'h' }))
       const tot = segTot(demand[i])
       return {
         label: dy.short, labelColor: dy.isWeekend ? 'var(--fg-subtle)' : 'var(--fg-muted)',
@@ -374,8 +463,8 @@ export default class Dispatch extends React.Component<{}, State> {
       { color: '#2FBFA8', label: 'Annotation' },
       { color: '#E07BB2', label: 'Review' },
       { color: '#E0B84D', label: 'Secondary review' },
-      { color: '#CEFF00', label: 'Coaching (reserved)' },
     ]
+    if (s.sessions.length) chartLegend.push({ color: STAGE_COLORS.CO, label: 'Coaching session (1h × both calendars)' })
 
     // ---- Batches ----
     const batchRows = !proposed
@@ -457,55 +546,140 @@ export default class Dispatch extends React.Component<{}, State> {
             const byReq: Record<string, number> = {}
             r!.draws.forEach((dr) => { if (dr.aid === a.id && dr.day === d) byReq[dr.req] = (byReq[dr.req] || 0) + dr.hours })
             Object.entries(byReq).forEach(([req, h]) => segs.push({ pct: Math.min(100, (h / maxH) * 100).toFixed(0) + '%', color: REQ_COLORS[req], title: 'Req ' + req + ': ' + h.toFixed(1) + 'h' }))
+            s.sessions.forEach((sn) => {
+              if (sn.day !== d || (sn.strugglerId !== a.id && sn.coachId !== a.id)) return
+              const other = this.aById(sn.strugglerId === a.id ? sn.coachId : sn.strugglerId)
+              segs.push({ pct: Math.min(100, (1 / maxH) * 100).toFixed(0) + '%', color: 'var(--volt-green)', title: 'Coaching session: 1h with ' + (other ? other.name : '') })
+            })
             return { segs, bg: dy.isWeekend ? 'var(--surface-sunken)' : 'var(--surface-subtle)', title: a.name + ' · ' + dy.label }
           })
           return { name: a.name, sub: (a.status === 'pto' ? 'PTO → Jul 16 · ' : '') + a.role + ' · ' + a.hours + 'h/day', cells }
         })
 
-    // ---- Coaching cards ----
-    const matchByLearner: Record<string, CoachMatch> = {}
-    matches.forEach((m) => (matchByLearner[m.learnerId] = m))
-    const hum = (d: string) => d.replace(/_/g, ' ')
-    const focusOf = (m: CoachMatch): string =>
-      m.learnerSpecialty === 'general' || m.learnerSpecialty === 'all' || m.focusDefects.length >= 4
-        ? 'all defect types (no specialty yet)'
-        : m.focusDefects.map(hum).join(', ')
-    const strongOf = (m: CoachMatch): string | null =>
-      m.learnerSpecialty && m.learnerSpecialty !== 'general' && m.learnerSpecialty !== 'all' ? hum(m.learnerSpecialty) : null
-
-    const activeIds = new Set(this.analysts.filter((a) => a.status === 'active').map((a) => a.id))
-    const coachingRows = (SHOW_COACHING ? this.coaching.filter((c) => activeIds.has(c.id)) : []).map((c) => {
-      const m = matchByLearner[c.id]
+    // ---- Analyst board ----
+    const boardCaption = proposed
+      ? 'Load = backlog reserve + scheduled batches vs available hours' + (s.weekendOT ? ' (incl. weekend OT)' : '')
+      : 'Roster from analysts.csv — load fills in once a schedule is proposed'
+    const analystBoardRows = this.analysts.map((a) => {
+      const ai = this.analysts.indexOf(a)
+      const avail = days.reduce((n, _, i) => n + hoursFor(a, i, s.weekendOT, s.sessions), 0)
+      let loadH = 0
+      if (proposed) {
+        loadH = r!.reserve[ai].reduce((n, v) => n + v, 0)
+        r!.draws.forEach((d) => { if (d.aid === a.id) loadH += d.hours })
+      }
+      const util = avail > 0 ? loadH / avail : 0
+      const quals: string[] = []
+      if (a.canA) quals.push('Annotate')
+      if (a.canR) quals.push('Review')
+      if (a.canS) quals.push('2nd')
+      const rate = a.canA ? ((a.rateA * a.acc) / 100).toFixed(1) + ' img/hr A' : a.canR ? a.rateR.toFixed(0) + ' img/hr R' : a.rateS.toFixed(0) + ' img/hr S'
       return {
-        name: c.name,
+        id: a.id,
+        initials: mkInit(a.name),
+        name: a.name,
+        sub: a.role + ' · ' + a.seniority + ' · ' + a.hours + 'h/day',
+        quals,
+        rate,
+        acc: a.acc.toFixed(1) + '%',
+        accColor: a.acc < 90 ? 'var(--sev-high)' : 'var(--fg-muted)',
+        utilPct: (proposed ? Math.min(100, util * 100) : 0).toFixed(0) + '%',
+        utilColor: util > 0.92 ? 'var(--sev-high)' : 'var(--cobalt-blue)',
+        utilLabel: proposed ? Math.round(loadH) + 'h / ' + Math.round(avail) + 'h' : '— / ' + Math.round(avail) + 'h',
+        status: a.status === 'pto' ? 'PTO → Jul 16' : 'Active',
+        statusBg: a.status === 'pto' ? 'var(--surface-subtle)' : 'var(--sev-low-bg)',
+        statusColor: a.status === 'pto' ? 'var(--fg-subtle)' : 'var(--sev-low)',
+      }
+    })
+
+    // ---- Coaching pairings ----
+    interface PairRow {
+      id: string; stName: string; stInitials: string; stSub: string
+      tag: string; tagBg: string; tagColor: string; stIconBg: string; stIconColor: string
+      note: string; coName: string; coInitials: string; coSub: string; fitLabel: string; why: string
+      factorRows: { label: string; width: string }[]
+      candChips: { label: string; chipBg: string; chipBorder: string; chipColor: string; pick: () => void }[]
+      candRows: { initials: string; name: string; why: string; fitLabel: string; isChosen: boolean; notChosen: boolean; rowBorder: string; assign: () => void }[]
+      isPending: boolean; isAccepted: boolean; isScheduled: boolean; canSwap: boolean
+      footNote: string; sessionLabel: string
+      accept: () => void; dismiss: () => void; book: () => void
+    }
+    const pairRows: PairRow[] = []
+    if (SHOW_COACHING) this.coaching.forEach((c) => {
+      const status = s.coachStatus[c.id] || 'pending'
+      if (status === 'dismissed') return
+      const cands = this.rankCoaches(c, proposed ? r : null)
+      if (!cands.length) return
+      const chosen = cands.find((x) => x.a.id === s.coachSel[c.id]) || cands[0]
+      const st = this.aById(c.id)
+      const session = s.sessions.find((x) => x.sigId === c.id)
+      const slot = session ? session.label : this.slotLabel(this.findSlot(c.id, chosen.a.id), c.id, chosen.a.id)
+      const pctW = (v: number) => Math.round(Math.max(0.06, Math.min(1, v)) * 100) + '%'
+      const factorRows = [
+        { label: c.kind === 'acc' ? 'ACCURACY' : 'PACE', width: pctW(chosen.skill) },
+        { label: 'SPECIALTY', width: pctW(chosen.spec) },
+        { label: 'TIMEZONE', width: pctW(chosen.tz) },
+        { label: 'CAPACITY', width: pctW(chosen.cap) },
+      ]
+      const pick = (aid: string) => this.setState((s2) => ({ coachSel: { ...s2.coachSel, [c.id]: aid }, coachStatus: { ...s2.coachStatus, [c.id]: s2.coachStatus[c.id] === 'scheduled' ? 'scheduled' : 'pending' } }))
+      const candChips = cands.map((x) => ({
+        label: x.a.name.split(' ')[0] + ' · ' + Math.round(x.fit * 100) + '%',
+        chipBg: x.a.id === chosen.a.id ? 'var(--icon-blue-bg)' : 'transparent',
+        chipBorder: x.a.id === chosen.a.id ? 'var(--cobalt-blue)' : 'var(--border-strong)',
+        chipColor: x.a.id === chosen.a.id ? 'var(--cobalt-blue)' : 'var(--fg-muted)',
+        pick: () => pick(x.a.id),
+      }))
+      const candRows = cands.map((x) => ({
+        initials: mkInit(x.a.name),
+        name: x.a.name,
+        why: x.why,
+        fitLabel: Math.round(x.fit * 100) + '%',
+        isChosen: x.a.id === chosen.a.id,
+        notChosen: x.a.id !== chosen.a.id,
+        rowBorder: x.a.id === chosen.a.id ? 'var(--cobalt-blue)' : 'var(--border)',
+        assign: () => pick(x.a.id),
+      }))
+      pairRows.push({
+        id: c.id,
+        stName: c.name,
+        stInitials: mkInit(c.name),
+        stSub: st ? st.seniority + ' · ' + st.specialty.replace(/_/g, ' ') + ' · ' + st.tz : '',
         tag: c.kind === 'acc' ? 'ACCURACY DIP' : 'PACE DRIFT',
         tagBg: c.kind === 'acc' ? 'var(--sev-high-bg)' : 'var(--icon-blue-bg)',
         tagColor: c.kind === 'acc' ? 'var(--sev-high)' : 'var(--cobalt-blue)',
-        iconBg: c.kind === 'acc' ? 'var(--icon-amber-bg)' : 'var(--icon-blue-bg)',
-        iconColor: c.kind === 'acc' ? 'var(--sev-high)' : 'var(--cobalt-blue)',
+        stIconBg: c.kind === 'acc' ? 'var(--icon-amber-bg)' : 'var(--icon-blue-bg)',
+        stIconColor: c.kind === 'acc' ? 'var(--sev-high)' : 'var(--cobalt-blue)',
         note: c.note,
-        focus: m ? focusOf(m) : null,
-        strong: m ? strongOf(m) : null,
-        primary: m ? m.primaryName : null,
-        consult: m && m.consult ? `${m.consult.coachName} · ${hum(m.consult.defect)}` : null,
-      }
+        coName: chosen.a.name,
+        coInitials: mkInit(chosen.a.name),
+        coSub: chosen.a.seniority + ' · ' + chosen.a.specialty.replace(/_/g, ' ') + ' · ' + chosen.a.tz,
+        fitLabel: Math.round(chosen.fit * 100) + '% fit',
+        why: chosen.why,
+        factorRows, candChips, candRows,
+        isPending: status === 'pending',
+        isAccepted: status === 'accepted',
+        isScheduled: status === 'scheduled',
+        canSwap: status !== 'scheduled',
+        footNote: status === 'scheduled' ? '1h off both schedules · on the timeline' : slot ? 'Next mutual free hour: ' + slot : 'No mutual free hour in window',
+        sessionLabel: session ? 'Booked ' + session.label : '',
+        accept: () => this.pairAccept(c, chosen),
+        dismiss: () => this.pairDismiss(c),
+        book: () => this.bookSession(c, chosen.a.id),
+      })
     })
-    // learners flagged by low absolute accuracy but not by the dip signal still get a card
-    matches.forEach((m) => {
-      if (!coachingRows.find((c) => c.name === m.learnerName)) {
-        coachingRows.push({
-          name: m.learnerName,
-          tag: 'BELOW ACCURACY FLOOR',
-          tagBg: 'var(--sev-high-bg)', tagColor: 'var(--sev-high)',
-          iconBg: 'var(--icon-amber-bg)', iconColor: 'var(--sev-high)',
-          note: `First-pass accuracy sits at ${m.learnerAcc.toFixed(1)}% — below the 90% floor, so annotation is routed through a paired review and the scheduler discounts throughput.`,
-          focus: focusOf(m),
-          strong: strongOf(m),
-          primary: m.primaryName,
-          consult: m.consult ? `${m.consult.coachName} · ${hum(m.consult.defect)}` : null,
-        })
-      }
-    })
+    const focusId = pairRows.some((p) => p.id === s.coachFocus) ? s.coachFocus : pairRows[0] ? pairRows[0].id : null
+    const focusPair = pairRows.find((p) => p.id === focusId) || null
+    const focusList = pairRows.map((p) => ({
+      id: p.id, name: p.stName, initials: p.stInitials, tag: p.tag, tagBg: p.tagBg, tagColor: p.tagColor,
+      itemBg: p.id === focusId ? 'var(--surface-subtle)' : 'transparent',
+      itemBorder: p.id === focusId ? 'var(--cobalt-blue)' : 'var(--border)',
+      statusLabel: p.isScheduled ? 'Booked' : p.isAccepted ? 'Locked' : 'Review',
+      statusColor: p.isScheduled ? 'var(--sev-low)' : p.isAccepted ? 'var(--cobalt-blue)' : 'var(--fg-subtle)',
+      sel: () => this.setState({ coachFocus: p.id }),
+    }))
+    const showCoachingSection = SHOW_COACHING && this.coaching.length > 0
+    const coachCaption = 'Matching engine — strength in the weak metric · specialty overlap · timezone · spare capacity · max 3 pairs/week'
+    const layoutOptions: CoachingLayout[] = ['pairs', 'board', 'focus']
 
     // ---- Chat ----
     const messageRows = s.messages.map((m) => ({
@@ -522,7 +696,7 @@ export default class Dispatch extends React.Component<{}, State> {
       if (!s.weekendOT) presets.push({ kind: 'ot', label: 'Authorize weekend overtime for the surge' })
       presets.push({ kind: 'risk', label: "What's at risk right now?" })
     }
-    presets.push({ kind: 'coach', label: 'Who needs coaching this week?' })
+    presets.push({ kind: 'coach', label: 'Who should coach whom this week?' })
     if (proposed && s.weekendOT) presets.push({ kind: 'risk', label: 'Re-check deadlines' })
 
     const anyPending = pendingCount > 0
@@ -533,8 +707,39 @@ export default class Dispatch extends React.Component<{}, State> {
       this.setState((st) => ({ decisions, messages: [...st.messages, { role: 'ai', text: 'All batches locked in and pushed to each analyst’s Threadr queue as Assigned. I’ll alert you if anyone’s live pace puts an ETA at risk.' }] }))
     }
 
-    const showCoachingSection = SHOW_COACHING && coachingRows.length > 0
-    const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.75, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+    const chev = (deg: string) => (
+      <svg width="15" height="15" viewBox="0 0 24 24" {...stroke} style={{ color: 'var(--fg-subtle)', flexShrink: 0, transition: 'transform 200ms cubic-bezier(0.2,0.8,0.2,1)', transform: `rotate(${deg})` }}><path d="m9 18 6-6-6-6"></path></svg>
+    )
+    const headerBtnStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 12, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--fg)', fontFamily: "'Instrument Sans', sans-serif", textAlign: 'left' }
+
+    // Reusable coaching sub-blocks --------------------------------------------
+    const candidateSwap = (p: PairRow) => (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>Coach:</span>
+        {p.candChips.map((ch, i) => (
+          <button key={i} onClick={ch.pick} className="dc-chip" style={{ padding: '4px 11px', borderRadius: 999, background: ch.chipBg, border: `1px solid ${ch.chipBorder}`, color: ch.chipColor, fontFamily: "'Instrument Sans', sans-serif", fontSize: 11, cursor: 'pointer' }}>{ch.label}</button>
+        ))}
+      </div>
+    )
+    const pairActions = (p: PairRow) => (
+      <>
+        {p.isPending && (
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button onClick={p.dismiss} className="dc-deny" style={{ padding: '6px 14px', borderRadius: 999, background: 'transparent', border: '1px solid var(--border-strong)', color: 'var(--fg-muted)', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12.5, cursor: 'pointer' }}>Dismiss</button>
+            <button onClick={p.accept} className="dc-volt" style={{ padding: '6px 14px', borderRadius: 999, background: 'var(--volt-green)', border: '1px solid var(--volt-green)', color: '#14110F', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12.5, fontWeight: 500, cursor: 'pointer' }}>Accept pair</button>
+          </div>
+        )}
+        {p.isAccepted && (
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--sev-low)' }}>✓ Pair locked</span>
+            <button onClick={p.book} className="dc-volt" style={{ padding: '6px 14px', borderRadius: 999, background: 'var(--volt-green)', border: '1px solid var(--volt-green)', color: '#14110F', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12.5, fontWeight: 500, cursor: 'pointer' }}>Book 1h session</button>
+          </div>
+        )}
+        {p.isScheduled && (
+          <span style={{ marginLeft: 'auto', padding: '4px 12px', borderRadius: 999, background: 'var(--sev-low-bg)', color: 'var(--sev-low)', fontSize: 11.5, fontWeight: 500 }}>{p.sessionLabel}</span>
+        )}
+      </>
+    )
 
     return (
       <div data-theme="dark" data-screen-label="Threadr Dispatch v2" style={{ ['--app-bg' as any]: '#0E0E10', ['--surface' as any]: '#1A1B1D', ['--surface-subtle' as any]: '#232427', ['--surface-elevated' as any]: '#28292D', ['--surface-sunken' as any]: '#08080A', ['--border' as any]: '#242528', ['--border-strong' as any]: '#3B3C41', height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--app-bg)', color: 'var(--fg)', fontFamily: "'Instrument Sans', sans-serif", overflow: 'hidden' }}>
@@ -575,55 +780,63 @@ export default class Dispatch extends React.Component<{}, State> {
             {/* Incoming requests strip */}
             {s.intake && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <h2 style={{ margin: 0, fontSize: 19, fontWeight: 500, letterSpacing: '-0.01em' }}>Incoming requests · Jul 10–18</h2>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(215px, 1fr))', gap: 12 }}>
-                  {requestRows.map((rq) => (
-                    <div key={rq.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ width: 9, height: 9, borderRadius: 999, background: rq.color }}></span>
-                        <span style={{ fontSize: 13.5, fontWeight: 500 }}>{rq.title}</span>
-                        <span style={{ marginLeft: 'auto', padding: '2px 9px', borderRadius: 999, background: rq.prioBg, color: rq.prioColor, fontSize: 10, fontWeight: 600, letterSpacing: '0.05em' }}>{rq.prio}</span>
+                <button onClick={() => this.setState((st) => ({ reqOpen: !st.reqOpen }))} style={headerBtnStyle}>
+                  {chev(s.reqOpen ? '90deg' : '0deg')}
+                  <h2 style={{ margin: 0, fontSize: 19, fontWeight: 500, letterSpacing: '-0.01em', whiteSpace: 'nowrap' }}>Incoming requests · Jul 10–18</h2>
+                </button>
+                {s.reqOpen && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(215px, 1fr))', gap: 12 }}>
+                    {requestRows.map((rq) => (
+                      <div key={rq.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ width: 9, height: 9, borderRadius: 999, background: rq.color }}></span>
+                          <span style={{ fontSize: 13.5, fontWeight: 500 }}>{rq.title}</span>
+                          <span style={{ marginLeft: 'auto', padding: '2px 9px', borderRadius: 999, background: rq.prioBg, color: rq.prioColor, fontSize: 10, fontWeight: 600, letterSpacing: '0.05em' }}>{rq.prio}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{rq.volume}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--fg-subtle)' }}>
+                          <span>{rq.window}</span>
+                          <span style={{ marginLeft: 'auto', padding: '3px 10px', borderRadius: 999, background: rq.slackBg, color: rq.slackColor, fontSize: 11, fontWeight: 500 }}>{rq.slackLabel}</span>
+                        </div>
                       </div>
-                      <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{rq.volume}</div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--fg-subtle)' }}>
-                        <span>{rq.window}</span>
-                        <span style={{ marginLeft: 'auto', padding: '3px 10px', borderRadius: 999, background: rq.slackBg, color: rq.slackColor, fontSize: 11, fontWeight: 500 }}>{rq.slackLabel}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
             {/* Capacity vs demand chart */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-                <h2 style={{ margin: 0, fontSize: 19, fontWeight: 500, letterSpacing: '-0.01em' }}>Capacity vs demand</h2>
-                <span style={{ fontSize: 12.5, color: 'var(--fg-subtle)' }}>{chartCaption}</span>
-              </div>
-              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '20px 20px 14px 20px' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 170 }}>
-                  {chartCols.map((c, i) => (
-                    <div key={i} style={{ flex: 1, height: '100%', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: c.bg, borderRadius: 6 }} title={c.title}>
-                      {c.segs.map((sg: any, j: number) => (
-                        <div key={j} style={{ height: sg.pct, background: sg.color, borderRadius: 2, margin: '0 3px 1px 3px' }} title={sg.title}></div>
-                      ))}
-                      <div style={{ position: 'absolute', left: 0, right: 0, bottom: c.capPct, height: 0, borderTop: `2px dashed ${c.capColor}` }} title={c.capTitle}></div>
-                    </div>
-                  ))}
+              <button onClick={() => this.setState((st) => ({ chartOpen: !st.chartOpen }))} style={headerBtnStyle}>
+                {chev(s.chartOpen ? '90deg' : '0deg')}
+                <h2 style={{ margin: 0, fontSize: 19, fontWeight: 500, letterSpacing: '-0.01em', whiteSpace: 'nowrap' }}>Capacity vs demand</h2>
+                <span style={{ fontSize: 12.5, color: 'var(--fg-subtle)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{chartCaption}</span>
+              </button>
+              {s.chartOpen && (
+                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '20px 20px 14px 20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 170 }}>
+                    {chartCols.map((c, i) => (
+                      <div key={i} style={{ flex: 1, height: '100%', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: c.bg, borderRadius: 6 }} title={c.title}>
+                        {c.segs.map((sg, j) => (
+                          <div key={j} style={{ height: sg.pct, background: sg.color, borderRadius: 2, margin: '0 3px 1px 3px' }} title={sg.title}></div>
+                        ))}
+                        <div style={{ position: 'absolute', left: 0, right: 0, bottom: c.capPct, height: 0, borderTop: `2px dashed ${c.capColor}` }} title={c.capTitle}></div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                    {chartCols.map((c, i) => (
+                      <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: 10, color: c.labelColor }}>{c.label}</span>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                    {chartLegend.map((l, i) => (
+                      <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-muted)' }}><span style={{ width: 10, height: 10, borderRadius: 3, background: l.color }}></span>{l.label}</span>
+                    ))}
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-muted)' }}><span style={{ width: 14, borderTop: '2px dashed var(--fg-muted)' }}></span>Available hours (after PTO, weekends, backlog reserve)</span>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                  {chartCols.map((c, i) => (
-                    <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: 10, color: c.labelColor }}>{c.label}</span>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                  {chartLegend.map((l, i) => (
-                    <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-muted)' }}><span style={{ width: 10, height: 10, borderRadius: 3, background: l.color }}></span>{l.label}</span>
-                  ))}
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-muted)' }}><span style={{ width: 14, borderTop: '2px dashed var(--fg-muted)' }}></span>Available hours (after PTO, weekends, backlog reserve)</span>
-                </div>
-              </div>
+              )}
             </div>
 
             {/* Proposed batches */}
@@ -726,72 +939,198 @@ export default class Dispatch extends React.Component<{}, State> {
               </div>
             )}
 
-            {/* Coaching */}
+            {/* Analyst board */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <button onClick={() => this.setState((st) => ({ boardOpen: !st.boardOpen }))} style={headerBtnStyle}>
+                {chev(s.boardOpen ? '90deg' : '0deg')}
+                <h2 style={{ margin: 0, fontSize: 19, fontWeight: 500, letterSpacing: '-0.01em', whiteSpace: 'nowrap' }}>Analyst board</h2>
+                <span style={{ fontSize: 12.5, color: 'var(--fg-subtle)' }}>{boardCaption}</span>
+              </button>
+              {s.boardOpen && (
+                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden', overflowX: 'auto' }}>
+                  <div style={{ minWidth: 860 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '200px 130px 110px 90px 1fr 90px', gap: 12, alignItems: 'center', padding: '10px 20px', borderBottom: '1px solid var(--border)', fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--fg-subtle)' }}>
+                      <span>ANALYST</span><span>QUALIFIED</span><span>NET RATE</span><span>ACCURACY</span><span>LOAD · JUL 10–25</span><span>STATUS</span>
+                    </div>
+                    {analystBoardRows.map((a) => (
+                      <div key={a.id} style={{ display: 'grid', gridTemplateColumns: '200px 130px 110px 90px 1fr 90px', gap: 12, alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{ width: 30, height: 30, borderRadius: 999, background: 'var(--surface-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', flexShrink: 0 }}>{a.initials}</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                            <span style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }}>{a.name}</span>
+                            <span style={{ fontSize: 11, color: 'var(--fg-subtle)', whiteSpace: 'nowrap' }}>{a.sub}</span>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 5 }}>
+                          {a.quals.map((q, i) => (<span key={i} style={{ padding: '2px 8px', borderRadius: 999, background: 'var(--surface-subtle)', border: '1px solid var(--border)', fontSize: 10.5, color: 'var(--fg-muted)' }}>{q}</span>))}
+                        </div>
+                        <span style={{ fontSize: 12.5, color: 'var(--fg-muted)', fontVariantNumeric: 'tabular-nums' }}>{a.rate}</span>
+                        <span style={{ fontSize: 12.5, color: a.accColor, fontVariantNumeric: 'tabular-nums' }}>{a.acc}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{ flex: 1, height: 7, borderRadius: 999, background: 'var(--surface-sunken)', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: a.utilPct, background: a.utilColor, borderRadius: 999, transition: 'width 200ms cubic-bezier(0.2,0.8,0.2,1)' }}></div>
+                          </div>
+                          <span style={{ fontSize: 11.5, color: 'var(--fg-subtle)', fontVariantNumeric: 'tabular-nums', width: 76, flexShrink: 0 }}>{a.utilLabel}</span>
+                        </div>
+                        <span style={{ justifySelf: 'start', padding: '3px 10px', borderRadius: 999, background: a.statusBg, color: a.statusColor, fontSize: 11, fontWeight: 500 }}>{a.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Coaching pairings */}
             {showCoachingSection && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-                  <h2 style={{ margin: 0, fontSize: 19, fontWeight: 500, letterSpacing: '-0.01em' }}>Coaching signals</h2>
-                  <span style={{ fontSize: 12.5, color: 'var(--fg-subtle)' }}>Fitted from 30-day throughput history — plus one primary coach matched by defect specialty</span>
-                </div>
+                <button onClick={() => this.setState((st) => ({ coachOpen: !st.coachOpen }))} style={headerBtnStyle}>
+                  {chev(s.coachOpen ? '90deg' : '0deg')}
+                  <h2 style={{ margin: 0, fontSize: 19, fontWeight: 500, letterSpacing: '-0.01em', whiteSpace: 'nowrap' }}>Coaching pairings</h2>
+                  <span style={{ fontSize: 12.5, color: 'var(--fg-subtle)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{coachCaption}</span>
+                </button>
 
-                {/* Coaching budget banner + dedicated-hours lever */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 20, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '14px 20px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span style={{ fontSize: 11, letterSpacing: '0.08em', color: 'var(--fg-subtle)' }}>COACHING BUDGET</span>
-                    <span style={{ fontSize: 22, fontWeight: 500, letterSpacing: '-0.01em', color: budget.feasible ? 'var(--sev-low)' : 'var(--sev-high)' }}>{budget.feasible ? `~${Math.round(budget.totalHours)}h free` : '0h'}</span>
-                    <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{budget.feasible ? (budget.deferredFromIdx != null && budget.deferredFromIdx > 0 ? `Opens ${days[budget.deferredFromIdx].label} once the surge clears` : 'Spare mentor time, all deadlines safe') : 'Deadlines at risk — clear them first (weekend OT)'}</span>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span style={{ fontSize: 11, letterSpacing: '0.08em', color: 'var(--fg-subtle)' }}>SUGGESTED</span>
-                    <span style={{ fontSize: 22, fontWeight: 500, letterSpacing: '-0.01em', color: 'var(--fg)' }}>{suggestedTotal}h</span>
-                    <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>~1h/day per analyst who needs help</span>
-                  </div>
-                  <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-                    <span style={{ fontSize: 11, letterSpacing: '0.08em', color: 'var(--fg-subtle)' }}>DEDICATED · PER MENTEE / DAY</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <button onClick={() => this.setCoaching(s.coachingHoursPerDay - 0.5)} className="dc-pill-hover" style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid var(--border)', color: 'var(--fg)', fontSize: 16, cursor: 'pointer' }}>−</button>
-                      <span style={{ fontSize: 18, fontWeight: 500, minWidth: 54, textAlign: 'center' }}>{s.coachingHoursPerDay}h</span>
-                      <button onClick={() => this.setCoaching(s.coachingHoursPerDay + 0.5)} className="dc-pill-hover" style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--surface-elevated)', border: '1px solid var(--border)', color: 'var(--fg)', fontSize: 16, cursor: 'pointer' }}>+</button>
+                {s.coachOpen && (
+                  <>
+                    {/* layout toggle */}
+                    <div style={{ display: 'flex', gap: 4, padding: 4, borderRadius: 999, background: 'var(--surface-subtle)', border: '1px solid var(--border)', alignSelf: 'flex-start' }}>
+                      {layoutOptions.map((lay) => (
+                        <button key={lay} onClick={() => this.setState({ coachingLayout: lay })} style={{ padding: '5px 16px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12, textTransform: 'capitalize', background: s.coachingLayout === lay ? 'var(--surface-elevated)' : 'transparent', color: s.coachingLayout === lay ? 'var(--fg)' : 'var(--fg-subtle)', fontWeight: s.coachingLayout === lay ? 500 : 400 }}>{lay}</button>
+                      ))}
                     </div>
-                    <span style={{ fontSize: 12, color: reservedTotal > 0.5 ? 'var(--cobalt-blue)' : 'var(--fg-subtle)' }}>{reservedTotal > 0.5 ? `${Math.round(reservedTotal)}h reserved in the plan` : 'Not reserved yet'}</span>
-                  </div>
-                </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                  {coachingRows.map((c, i) => (
-                    <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px', display: 'flex', gap: 14 }}>
-                      <div style={{ width: 36, height: 36, flexShrink: 0, borderRadius: 10, background: c.iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: c.iconColor }}>
-                        <svg width="18" height="18" viewBox="0 0 24 24" {...stroke}><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+                    {pairRows.length === 0 && (
+                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 20px', fontSize: 13, color: 'var(--fg-muted)' }}>All coaching signals are resolved for this week — new pairings appear here if the daily history flags a trend.</div>
+                    )}
+
+                    {/* Layout: pair cards */}
+                    {s.coachingLayout === 'pairs' && pairRows.length > 0 && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }}>
+                        {pairRows.map((p) => (
+                          <div key={p.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 13, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                              <div style={{ width: 34, height: 34, borderRadius: 999, background: p.stIconBg, color: p.stIconColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 500, flexShrink: 0 }}>{p.stInitials}</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: 14, fontWeight: 500 }}>{p.stName}</span>
+                                  <span style={{ padding: '2px 8px', borderRadius: 999, background: p.tagBg, color: p.tagColor, fontSize: 9.5, fontWeight: 600, letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>{p.tag}</span>
+                                </div>
+                                <span style={{ fontSize: 11, color: 'var(--fg-subtle)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.stSub}</span>
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, flexShrink: 0, color: 'var(--fg-subtle)', padding: '0 16px' }}>
+                                <svg width="26" height="10" viewBox="0 0 26 10" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"><path d="M1 5h22"></path><path d="m19 1 4 4-4 4"></path></svg>
+                                <span style={{ padding: '2px 9px', borderRadius: 999, background: 'var(--icon-blue-bg)', color: 'var(--cobalt-blue)', fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap' }}>{p.fitLabel}</span>
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1, alignItems: 'flex-end' }}>
+                                <span style={{ fontSize: 14, fontWeight: 500 }}>{p.coName}</span>
+                                <span style={{ fontSize: 11, color: 'var(--fg-subtle)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.coSub}</span>
+                              </div>
+                              <div style={{ width: 34, height: 34, borderRadius: 999, background: 'var(--icon-blue-bg)', color: 'var(--cobalt-blue)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 500, flexShrink: 0 }}>{p.coInitials}</div>
+                            </div>
+                            <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--fg-muted)' }}>{p.note}</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
+                              {p.factorRows.map((f, i) => (
+                                <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                                  <span style={{ fontSize: 9, letterSpacing: '0.08em', color: 'var(--fg-subtle)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.label}</span>
+                                  <div style={{ height: 5, borderRadius: 999, background: 'var(--surface-sunken)', overflow: 'hidden' }}>
+                                    <div style={{ height: '100%', width: f.width, background: 'var(--cobalt-blue)', borderRadius: 999, transition: 'width 200ms cubic-bezier(0.2,0.8,0.2,1)' }}></div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            {p.canSwap && candidateSwap(p)}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 'auto' }}>
+                              <span style={{ fontSize: 11.5, color: 'var(--fg-subtle)' }}>{p.footNote}</span>
+                              {pairActions(p)}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: 14, fontWeight: 500 }}>{c.name}</span>
-                          <span style={{ padding: '2px 9px', borderRadius: 999, background: c.tagBg, color: c.tagColor, fontSize: 10.5, fontWeight: 500, letterSpacing: '0.04em' }}>{c.tag}</span>
+                    )}
+
+                    {/* Layout: match board */}
+                    {s.coachingLayout === 'board' && pairRows.length > 0 && (
+                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '210px 1fr 300px', gap: 14, padding: '10px 20px', borderBottom: '1px solid var(--border)', fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--fg-subtle)' }}>
+                          <span>NEEDS COACHING</span><span>SIGNAL · COACH MATCH</span><span style={{ textAlign: 'right' }}>SESSION</span>
                         </div>
-                        <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--fg-muted)' }}>{c.note}</div>
-                        {c.focus && (
-                          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                            <span style={{ padding: '3px 10px', borderRadius: 999, background: 'var(--sev-high-bg)', color: 'var(--sev-high)', fontSize: 11.5, fontWeight: 500 }}>Needs help on: {c.focus}</span>
-                            {c.strong && (
-                              <span style={{ padding: '3px 10px', borderRadius: 999, background: 'var(--sev-low-bg)', color: 'var(--sev-low)', fontSize: 11.5, fontWeight: 500 }}>Strong at: {c.strong}</span>
-                            )}
+                        {pairRows.map((p) => (
+                          <div key={p.id} style={{ display: 'grid', gridTemplateColumns: '210px 1fr 300px', gap: 14, padding: '14px 20px', borderBottom: '1px solid var(--border)', alignItems: 'start' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <div style={{ width: 32, height: 32, borderRadius: 999, background: p.stIconBg, color: p.stIconColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11.5, fontWeight: 500, flexShrink: 0 }}>{p.stInitials}</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+                                <span style={{ fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap' }}>{p.stName}</span>
+                                <span style={{ padding: '2px 8px', borderRadius: 999, background: p.tagBg, color: p.tagColor, fontSize: 9.5, fontWeight: 600, letterSpacing: '0.05em', alignSelf: 'flex-start', whiteSpace: 'nowrap' }}>{p.tag}</span>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+                              <span style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--fg-muted)' }}>{p.note}</span>
+                              {p.canSwap && candidateSwap(p)}
+                              <span style={{ fontSize: 11.5, color: 'var(--fg-subtle)' }}>{p.why}</span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+                              <span style={{ padding: '2px 9px', borderRadius: 999, background: 'var(--icon-blue-bg)', color: 'var(--cobalt-blue)', fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap' }}>{p.fitLabel}</span>
+                              <span style={{ fontSize: 11, color: 'var(--fg-subtle)', textAlign: 'right' }}>{p.footNote}</span>
+                              {p.isPending && (
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                  <button onClick={p.dismiss} className="dc-deny" style={{ padding: '6px 14px', borderRadius: 999, background: 'transparent', border: '1px solid var(--border-strong)', color: 'var(--fg-muted)', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12, cursor: 'pointer' }}>Dismiss</button>
+                                  <button onClick={p.accept} className="dc-volt" style={{ padding: '6px 14px', borderRadius: 999, background: 'var(--volt-green)', border: '1px solid var(--volt-green)', color: '#14110F', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Accept pair</button>
+                                </div>
+                              )}
+                              {p.isAccepted && (
+                                <button onClick={p.book} className="dc-volt" style={{ padding: '6px 14px', borderRadius: 999, background: 'var(--volt-green)', border: '1px solid var(--volt-green)', color: '#14110F', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Book 1h session</button>
+                              )}
+                              {p.isScheduled && (
+                                <span style={{ padding: '4px 12px', borderRadius: 999, background: 'var(--sev-low-bg)', color: 'var(--sev-low)', fontSize: 11.5, fontWeight: 500 }}>{p.sessionLabel}</span>
+                              )}
+                            </div>
                           </div>
-                        )}
-                        {c.primary && (
-                          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 999, background: 'var(--sev-low-bg)', color: 'var(--sev-low)', fontSize: 11.5, fontWeight: 500 }}>
-                              <svg width="12" height="12" viewBox="0 0 24 24" {...stroke}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                              Primary coach: {c.primary}
-                            </span>
-                            {c.consult && (
-                              <span style={{ padding: '3px 10px', borderRadius: 999, background: 'var(--icon-blue-bg)', color: 'var(--cobalt-blue)', fontSize: 11.5, fontWeight: 500 }}>Consult: {c.consult}</span>
-                            )}
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Layout: focus queue */}
+                    {s.coachingLayout === 'focus' && pairRows.length > 0 && (
+                      <div style={{ display: 'grid', gridTemplateColumns: '265px 1fr', gap: 14, alignItems: 'start' }}>
+                        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {focusList.map((fl) => (
+                            <button key={fl.id} onClick={fl.sel} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, background: fl.itemBg, border: `1px solid ${fl.itemBorder}`, cursor: 'pointer', fontFamily: "'Instrument Sans', sans-serif", textAlign: 'left', color: 'var(--fg)' }}>
+                              <div style={{ width: 30, height: 30, borderRadius: 999, background: 'var(--surface-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', flexShrink: 0 }}>{fl.initials}</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: 1 }}>
+                                <span style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }}>{fl.name}</span>
+                                <span style={{ padding: '1px 7px', borderRadius: 999, background: fl.tagBg, color: fl.tagColor, fontSize: 9, fontWeight: 600, letterSpacing: '0.05em', alignSelf: 'flex-start', whiteSpace: 'nowrap' }}>{fl.tag}</span>
+                              </div>
+                              <span style={{ fontSize: 10.5, fontWeight: 500, color: fl.statusColor, flexShrink: 0 }}>{fl.statusLabel}</span>
+                            </button>
+                          ))}
+                        </div>
+                        {focusPair && (
+                          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                            <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--fg-muted)' }}>{focusPair.note}</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <span style={{ fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--fg-subtle)' }}>RANKED COACHES</span>
+                              {focusPair.candRows.map((cr, i) => (
+                                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', border: `1px solid ${cr.rowBorder}`, borderRadius: 12, background: 'var(--app-bg)' }}>
+                                  <div style={{ width: 30, height: 30, borderRadius: 999, background: 'var(--icon-blue-bg)', color: 'var(--cobalt-blue)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 500, flexShrink: 0 }}>{cr.initials}</div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+                                    <span style={{ fontSize: 13, fontWeight: 500 }}>{cr.name}</span>
+                                    <span style={{ fontSize: 11.5, color: 'var(--fg-subtle)' }}>{cr.why}</span>
+                                  </div>
+                                  <span style={{ fontSize: 15, fontWeight: 500, color: 'var(--cobalt-blue)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{cr.fitLabel}</span>
+                                  {cr.isChosen && (<span style={{ padding: '3px 11px', borderRadius: 999, background: 'var(--icon-blue-bg)', color: 'var(--cobalt-blue)', fontSize: 11, fontWeight: 500, flexShrink: 0 }}>✓ Coach</span>)}
+                                  {cr.notChosen && (<button onClick={cr.assign} className="dc-chip" style={{ padding: '4px 12px', borderRadius: 999, background: 'transparent', border: '1px solid var(--border-strong)', color: 'var(--fg-muted)', fontFamily: "'Instrument Sans', sans-serif", fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>Make coach</button>)}
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <span style={{ fontSize: 11.5, color: 'var(--fg-subtle)' }}>{focusPair.footNote}</span>
+                              {pairActions(focusPair)}
+                            </div>
                           </div>
                         )}
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
 

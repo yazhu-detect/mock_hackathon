@@ -1,6 +1,8 @@
 import { chromium } from 'playwright'
 
-const shotDir = '/private/tmp/claude-501/-Users-yazhu-Desktop-mock-hackathon/70a323c7-5125-47ed-9752-2949bcbc5ed0/scratchpad'
+const shotDir =
+  process.env.SHOT_DIR ||
+  '/private/tmp/claude-501/-Users-augustinmuyl-dev-mock-hackathon/077aea6b-2bcc-4ad2-9a43-96c3de5d5d31/scratchpad'
 const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: 1512, height: 950 } })
 const errors = []
@@ -31,19 +33,32 @@ await page.screenshot({ path: shotDir + '/04-scheduled.png', fullPage: true })
 await clickChip('weekend overtime')
 await page.screenshot({ path: shotDir + '/05-overtime.png' })
 
-await clickChip('needs coaching')
+await clickChip('coach whom')
 await page.screenshot({ path: shotDir + '/06-coaching.png', fullPage: true })
 
-// snapshot key on-screen numbers
-const kpiTexts = await page.locator('text=/AT RISK|SCHEDULED|INCOMING VOLUME|TEAM SUPPLY/').allInnerTexts().catch(() => [])
+// Coaching pairing flow: accept the first pair, then book the 1h session.
+await page.getByRole('button', { name: /Accept pair/i }).first().click()
+await page.waitForTimeout(900)
+await page.getByRole('button', { name: /Book 1h session/i }).first().click()
+await page.waitForTimeout(1000)
+await page.screenshot({ path: shotDir + '/07-coaching-booked.png', fullPage: true })
+
+// Cycle the coaching layout variants.
+for (const lay of ['board', 'focus', 'pairs']) {
+  await page.getByRole('button', { name: new RegExp('^' + lay + '$', 'i') }).first().click()
+  await page.waitForTimeout(400)
+  await page.screenshot({ path: shotDir + `/08-coaching-${lay}.png`, fullPage: true })
+}
+
 const body = await page.locator('body').innerText()
 const grab = (re) => (body.match(re) || []).slice(0, 6)
 
 console.log('CONSOLE ERRORS:', errors.length ? errors : 'none')
 console.log('has req601:', body.includes('601'))
-console.log('coaching mentions primary coach:', body.includes('Primary coach'))
+console.log('has Analyst board:', body.includes('Analyst board'))
+console.log('has Coaching pairings:', body.includes('Coaching pairings'))
+console.log('fit labels:', grab(/\d+% fit/g))
 console.log('at-risk labels:', grab(/\d+d late|Zero slack|Overflow/g))
-console.log('coach pairings:', grab(/Primary coach: [A-Z][a-z]+ [A-Z][a-z]+/g))
-console.log('consult:', grab(/Consult: [A-Z][a-z]+ [A-Z][a-z]+/g))
+console.log('booked session:', grab(/Booked Jul \d+/g))
 
 await browser.close()

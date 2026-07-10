@@ -17,7 +17,9 @@ npm run dev        # then open http://localhost:5173
 2. *"…schedule everything"* — engine runs; assignments, capacity chart, Gantt, ETAs appear.
 3. *"Authorize weekend overtime…"* — recomputes; at-risk requests recover.
 4. **Accept / Deny** a batch (deny re-plans live) · **Accept all** locks it in.
-5. *"Who needs coaching this week?"* — signals + a matched primary coach (+ specialist consult).
+5. *"Who should coach whom this week?"* — accuracy/pace signals, each paired with a ranked coach;
+   accept a pair and **book a 1h session** that carves an hour out of both calendars (visible on
+   the chart + Gantt). Toggle the Pairs / Board / Focus layouts.
 
 If you regenerate data (`python3 generate_dataset.py`), refresh it: `cp data/*.csv dispatch/public/data/`.
 See [`dispatch/README.md`](dispatch/README.md) for build/preview and details.

@@ -38,11 +38,25 @@ export interface ScheduleResult {
   reserve: number[][]
 }
 
-// Hours available for analyst `a` on day `dayIdx`, honoring PTO + weekends.
-export function hoursFor(a: Analyst, dayIdx: number, weekendOT: boolean): number {
+// A booked 1-hour coaching session that carves an hour out of both the
+// learner's and the coach's day, and shows up on the chart / timeline.
+export interface Session {
+  sigId: string
+  strugglerId: string
+  coachId: string
+  day: number
+  label: string | null
+}
+
+// Hours available for analyst `a` on day `dayIdx`, honoring PTO + weekends,
+// then deducting any booked 1h coaching session that involves this analyst.
+export function hoursFor(a: Analyst, dayIdx: number, weekendOT: boolean, sessions: Session[] = []): number {
   if (a.status === 'pto' && dayIdx < 6) return 0 // a07 back Jul 16
-  if (DAYS[dayIdx].isWeekend) return weekendOT ? a.hours * 0.5 : 0
-  return a.hours
+  let h = DAYS[dayIdx].isWeekend ? (weekendOT ? a.hours * 0.5 : 0) : a.hours
+  for (const sn of sessions) {
+    if (sn.day === dayIdx && (sn.strugglerId === a.id || sn.coachId === a.id)) h = Math.max(0, h - 1)
+  }
+  return h
 }
 
 // Deterministic greedy scheduler — faithful port of the design's schedule().
@@ -53,6 +67,7 @@ export function schedule(
   weekendOT: boolean,
   deniedKeys: string[],
   secondarySamplePct: number,
+  sessions: Session[] = [],
 ): ScheduleResult {
   const days = DAYS
   const N = N_DAYS
@@ -62,8 +77,8 @@ export function schedule(
   const byId: Record<string, number> = {}
   analysts.forEach((a, i) => (byId[a.id] = i))
 
-  // capacity ledger (hours)
-  const cap = analysts.map((a) => days.map((_, i) => hoursFor(a, i, weekendOT)))
+  // capacity ledger (hours) — booked coaching sessions are already carved out
+  const cap = analysts.map((a) => days.map((_, i) => hoursFor(a, i, weekendOT, sessions)))
   const capTotal = days.map((_, i) => analysts.reduce((n, _a, ai) => n + cap[ai][i], 0))
 
   // backlog reserve, spread over first 6 working days

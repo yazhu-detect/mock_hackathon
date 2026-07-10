@@ -52,23 +52,26 @@ node verify.mjs      # Playwright: walks the whole flow, screenshots each step, 
 3. **"Authorize weekend overtime…"** — recomputes at half-capacity weekends; ETAs recover.
 4. **Accept / Deny** any batch — deny re-runs the whole plan and the assistant narrates the
    new ETA. **Accept all** locks the plan in.
-5. **"Who needs coaching this week?"** — accuracy-dip / pace-drift signals + each analyst's
-   **weak defects**, paired with a **primary coach** (domain-matched) and optional **specialist
-   consult**. A **coaching budget** = spare mentor-hours *after all deadlines are safe* (so it's
-   0 during the surge and opens once weekend OT clears it). The **dedicated-hours stepper** lets
-   Kyle reserve coaching from idle capacity (shown on the chart in volt-green) without moving any
-   client deadline.
+5. **"Who should coach whom this week?"** — accuracy-dip / pace-drift signals, each paired with
+   a ranked **coach** from the roster (scored on strength in the weak metric · specialty overlap
+   · timezone · spare capacity). **Swap** the coach from the candidate chips, **Accept pair**,
+   then **Book 1h session** — the hour is carved out of *both* calendars, recomputes the plan,
+   and shows up as a volt-green block on the chart and Gantt. Three layouts (**Pairs / Board /
+   Focus**) via the toggle.
+
+Collapsible section headers (Incoming requests, Capacity vs demand, Analyst board, Coaching
+pairings) let Kyle fold away anything he isn't looking at.
 
 ## Structure
 
 - `src/engine/schedule.ts` — deadline/priority-ordered greedy scheduler: capacity ledger,
   backlog reserve, rework-adjusted throughput (`rate × accuracy`), PTO/weekend rules, pipeline
-  gating (review of annotated, secondary of a sampled %), per-request ETA/slack.
+  gating (review of annotated, secondary of a sampled %), per-request ETA/slack. Booked coaching
+  sessions carve an hour out of both analysts' `hoursFor` capacity.
 - `src/engine/coaching.ts` — fits accuracy-dip / pace-drift signals from 30-day history.
-- `src/engine/coachingMatch.ts` — one-primary-coach + specialist-consult matching (`specialty`
-  is the defect axis; capacity drawn from the same ledger).
+- `src/pages/Dispatch.tsx` — the scheduler screen (incl. coach ranking / slot-finding / session
+  booking for the coaching pairings); `src/pages/Home.tsx` — the launcher.
 - `src/data/loadCsv.ts` — CSV load + typed models.
-- `src/pages/Dispatch.tsx` — the scheduler screen; `src/pages/Home.tsx` — the launcher.
 
 Design source: Claude Design project "Threadr Work Auto-Scheduler" (Threadr Dispatch v2).
 Verify the flow anytime with `node verify.mjs` (Playwright).
