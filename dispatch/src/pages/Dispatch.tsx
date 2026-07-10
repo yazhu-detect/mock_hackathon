@@ -38,6 +38,8 @@ interface State {
   coachOpen: boolean
   reqOpen: boolean
   chartOpen: boolean
+  chatOpen: boolean
+  chatSeen: number
   hoverDay: number | null
   hoverStage: string | null
   hoverReq: string | null
@@ -84,6 +86,8 @@ export default class Dispatch extends React.Component<{}, State> {
     coachOpen: true,
     reqOpen: true,
     chartOpen: true,
+    chatOpen: false,
+    chatSeen: 0,
     hoverDay: null,
     hoverStage: null,
     hoverReq: null,
@@ -829,7 +833,7 @@ export default class Dispatch extends React.Component<{}, State> {
           </div>
         </div>
 
-        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 392px', minHeight: 0 }}>
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: s.chatOpen ? '1fr 392px' : '1fr 0px', transition: 'grid-template-columns 320ms cubic-bezier(0.2,0.8,0.2,1)', minHeight: 0 }}>
 
           {/* MAIN COLUMN */}
           <div style={{ overflowY: 'auto', padding: '24px 28px 48px 28px', display: 'flex', flexDirection: 'column', gap: 24, minWidth: 0 }}>
@@ -1155,12 +1159,22 @@ export default class Dispatch extends React.Component<{}, State> {
 
           </div>
 
-          {/* CHAT PANEL */}
-          <div style={{ borderLeft: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          {/* CHAT PANEL — floating card that pops out of the corner bubble */}
+          <div style={{ display: 'flex', minHeight: 0, minWidth: 0, overflow: 'hidden', visibility: s.chatOpen ? 'visible' : 'hidden', transition: `visibility 0s linear ${s.chatOpen ? '0ms' : '320ms'}` }}>
+            <div style={{ width: 392, flexShrink: 0, boxSizing: 'border-box', padding: '16px 20px 20px 0', display: 'flex', minHeight: 0 }}>
+            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: '0 16px 40px rgba(0, 0, 0, 0.45)', overflow: 'hidden', transformOrigin: 'bottom right', transform: s.chatOpen ? 'none' : 'scale(0.1)', opacity: s.chatOpen ? 1 : 0, transition: 'transform 320ms cubic-bezier(0.2,0.8,0.2,1), opacity 240ms cubic-bezier(0.2,0.8,0.2,1)' }}>
             <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--volt-green)', boxShadow: 'var(--shadow-dot)' }}></div>
               <span style={{ fontSize: 14, fontWeight: 500 }}>Dispatch assistant</span>
               <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--fg-subtle)' }}>Live on Threadr data</span>
+              <button
+                onClick={() => this.setState((st) => ({ chatOpen: false, chatSeen: st.messages.length }))}
+                className="dc-icon-btn"
+                title="Close chat"
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 8, background: 'transparent', border: 'none', color: 'var(--fg-subtle)', cursor: 'pointer', flexShrink: 0 }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" {...stroke}><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+              </button>
             </div>
 
             <div ref={this.chatEl} style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1195,9 +1209,28 @@ export default class Dispatch extends React.Component<{}, State> {
                 </button>
               </div>
             </div>
+            </div>
+            </div>
           </div>
 
         </div>
+
+        {/* Chat bubble (chat closed) */}
+        {!s.chatOpen && (
+          <button
+            onClick={() => this.setState({ chatOpen: true })}
+            className="dc-send"
+            title="Open Dispatch assistant"
+            style={{ position: 'fixed', right: 24, bottom: 24, width: 54, height: 54, borderRadius: 999, background: 'var(--cobalt-fill)', border: 'none', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)', animation: 'dispatchBubbleIn 260ms cubic-bezier(0.2,0.8,0.2,1) 140ms backwards', zIndex: 50 }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" {...stroke}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            {(s.messages.length - s.chatSeen > 0 || s.typing) && (
+              <span style={{ position: 'absolute', top: -2, right: -2, minWidth: 19, height: 19, padding: '0 5px', borderRadius: 999, background: 'var(--volt-green)', color: '#14110F', fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--app-bg)', boxSizing: 'content-box' }}>
+                {s.typing && s.messages.length - s.chatSeen === 0 ? '…' : s.messages.length - s.chatSeen}
+              </span>
+            )}
+          </button>
+        )}
       </div>
     )
   }
