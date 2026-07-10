@@ -9,7 +9,6 @@ import { REQ_COLORS, BACKLOG_COLOR, STAGE_NAMES, STAGE_COLORS, DEFAULT_SECONDARY
 
 interface Msg { role: 'user' | 'ai'; text: string }
 type CoachStatus = 'pending' | 'accepted' | 'dismissed' | 'scheduled'
-type CoachingLayout = 'pairs' | 'board' | 'focus'
 
 // One ranked coach candidate for a coaching signal.
 interface CoachCand {
@@ -39,9 +38,7 @@ interface State {
   chartOpen: boolean
   coachSel: Record<string, string>
   coachStatus: Record<string, CoachStatus>
-  coachFocus: string | null
   sessions: Session[]
-  coachingLayout: CoachingLayout
   messages: Msg[]
   result: ScheduleResult | null
 }
@@ -76,9 +73,7 @@ export default class Dispatch extends React.Component<{}, State> {
     chartOpen: true,
     coachSel: {},
     coachStatus: {},
-    coachFocus: null,
     sessions: [],
-    coachingLayout: 'pairs',
     messages: [],
     result: null,
   }
@@ -303,19 +298,19 @@ export default class Dispatch extends React.Component<{}, State> {
           const risky = this.requests.filter((q) => r.reqResults[q.id].slack < 1)
           text = risky.length
             ? 'At risk right now:\n\n' +
-              risky
-                .map((q) => {
-                  const rr = r.reqResults[q.id]
-                  return (
-                    `Req ${q.id} ${q.line} (${q.priority}, due ${days[q.dueIdx] ? days[q.dueIdx].label : 'Jul 25'}): ` +
-                    (rr.etaIdx === null ? `${rr.unfinished} images don’t fit in the window.` : rr.slack < 0 ? `lands ${-rr.slack}d late.` : 'zero slack — any return cascade slips it.')
-                  )
-                })
-                .join('\n') +
-              (this.state.weekendOT ? '' : '\n\nBiggest lever: weekend overtime on Jul 11–12.')
+            risky
+              .map((q) => {
+                const rr = r.reqResults[q.id]
+                return (
+                  `Req ${q.id} ${q.line} (${q.priority}, due ${days[q.dueIdx] ? days[q.dueIdx].label : 'Jul 25'}): ` +
+                  (rr.etaIdx === null ? `${rr.unfinished} images don’t fit in the window.` : rr.slack < 0 ? `lands ${-rr.slack}d late.` : 'zero slack — any return cascade slips it.')
+                )
+              })
+              .join('\n') +
+            (this.state.weekendOT ? '' : '\n\nBiggest lever: weekend overtime on Jul 11–12.')
             : 'Nothing is late. Tightest request is ' +
-              this.requests.map((q) => ({ q, s: r.reqResults[q.id].slack })).sort((a, b) => a.s - b.s)[0].q.line +
-              ' — I’ll alert you if anyone’s pace drops below plan.'
+            this.requests.map((q) => ({ q, s: r.reqResults[q.id].slack })).sort((a, b) => a.s - b.s)[0].q.line +
+            ' — I’ll alert you if anyone’s pace drops below plan.'
         }
         this.setState((s) => ({ typing: false, messages: [...s.messages, { role: 'ai', text }] }))
       } else if (kind === 'coach') {
@@ -330,8 +325,8 @@ export default class Dispatch extends React.Component<{}, State> {
           })
         const text = pairs.length
           ? 'Matched this week’s signals against the roster — scored on strength in the weak metric, specialty overlap, timezone, and spare capacity:\n\n' +
-            pairs.join('\n\n') +
-            '\n\nReview them in the Coaching pairings panel — accept, swap the coach, or dismiss. Accepted pairs book as 1-hour in-person sessions that come out of both schedules.'
+          pairs.join('\n\n') +
+          '\n\nReview them in the Coaching pairings panel — accept, swap the coach, or dismiss. Accepted pairs book as 1-hour in-person sessions that come out of both schedules.'
           : 'No open coaching signals this week.'
         this.setState((s) => ({ typing: false, messages: [...s.messages, { role: 'ai', text }] }))
       } else {
@@ -470,43 +465,43 @@ export default class Dispatch extends React.Component<{}, State> {
     const batchRows = !proposed
       ? []
       : r!.batches.map((b) => {
-          const q = this.reqById(b.req)
-          const a = this.aById(b.aid)
-          const isAccepted = s.decisions[b.key] === 'accepted'
-          const isResolved = s.decisions[b.key] === 'accepted' || s.decisions[b.key] === 'denied'
-          const isPending = !isResolved
-          const netRate = b.stage === 'A' ? (a.rateA * a.acc) / 100 : b.stage === 'R' ? a.rateR : a.rateS
-          const imgs = Math.round(b.imgs)
-          const structs = Math.max(1, Math.round(imgs / (q.images / q.structures)))
-          const exp = s.expanded[b.key]
-          const whyLines = [
-            `${b.stage === 'A' ? a.rateA : b.stage === 'R' ? a.rateR : a.rateS} img/hr` + (b.stage === 'A' ? ` × ${a.acc}% first-pass = ${netRate.toFixed(1)} net img/hr` : ' measured over 30 days'),
-            `${b.hours.toFixed(1)}h drawn across ${b.end - b.start + 1} day(s), inside ${a.hours}h/day capacity`,
-            `Qualified: ${(['canA', 'canR', 'canS'] as const).filter((k) => a[k]).map((k) => (k === 'canA' ? 'annotation' : k === 'canR' ? 'review' : 'secondary')).join(', ')} · ${a.seniority} · ${a.specialty.replace(/_/g, ' ')}`,
-            b.stage === 'A' && a.acc < 90 ? 'Accuracy discount applied — batch routed through paired review' : `Backlog reserve already deducted from ${a.name.split(' ')[0]}’s hours`,
-          ]
-          const perStruct = Math.max(1, Math.round(q.images / q.structures))
-          const structItems: string[] = []
-          for (let i = 0; i < Math.min(structs, 8); i++) structItems.push(`${q.line}-${String(i + 1).padStart(3, '0')} · ${perStruct} imgs`)
-          if (structs > 8) structItems.push('+' + (structs - 8) + ' more')
-          return {
-            key: b.key, req: b.req, imgsRaw: imgs, reqColor: REQ_COLORS[b.req],
-            analyst: a.name, reqLabel: 'Req ' + b.req + ' · ' + q.line, stageLabel: STAGE_NAMES[b.stage],
-            countLabel: imgs.toLocaleString() + ' imgs', structLabel: '~' + structs + ' structures',
-            reason: `${netRate.toFixed(1)} net img/hr puts ${a.name.split(' ')[0]} ${b.stage === 'A' ? 'among the fastest qualified annotators' : 'on the ' + STAGE_NAMES[b.stage].toLowerCase() + ' wave'} for this window · ${a.specialty === 'all' ? 'supervisor overflow' : a.specialty.replace(/_/g, ' ') + ' specialty'}.`,
-            window: days[b.start].label + (b.end > b.start ? ' – ' + days[b.end].label : ''),
-            whyOpen: exp === 'why', structsOpen: exp === 'structs',
-            whyBtn: exp === 'why' ? 'Hide math' : 'Why?', structsBtn: exp === 'structs' ? 'Hide structures' : 'Structures',
-            whyLines, structItems,
-            isPending, isResolved,
-            statusLabel: isAccepted ? '✓ Accepted' : 'Denied', statusColor: 'var(--sev-low)',
-            borderColor: isAccepted ? 'rgba(69, 208, 138, 0.45)' : 'var(--border)', opacity: 1,
-            accept: () => this.decide(b.key, true),
-            deny: () => this.decide(b.key, false),
-            toggleWhy: () => this.setState((st) => ({ expanded: { ...st.expanded, [b.key]: st.expanded[b.key] === 'why' ? null : 'why' } })),
-            toggleStructs: () => this.setState((st) => ({ expanded: { ...st.expanded, [b.key]: st.expanded[b.key] === 'structs' ? null : 'structs' } })),
-          }
-        })
+        const q = this.reqById(b.req)
+        const a = this.aById(b.aid)
+        const isAccepted = s.decisions[b.key] === 'accepted'
+        const isResolved = s.decisions[b.key] === 'accepted' || s.decisions[b.key] === 'denied'
+        const isPending = !isResolved
+        const netRate = b.stage === 'A' ? (a.rateA * a.acc) / 100 : b.stage === 'R' ? a.rateR : a.rateS
+        const imgs = Math.round(b.imgs)
+        const structs = Math.max(1, Math.round(imgs / (q.images / q.structures)))
+        const exp = s.expanded[b.key]
+        const whyLines = [
+          `${b.stage === 'A' ? a.rateA : b.stage === 'R' ? a.rateR : a.rateS} img/hr` + (b.stage === 'A' ? ` × ${a.acc}% first-pass = ${netRate.toFixed(1)} net img/hr` : ' measured over 30 days'),
+          `${b.hours.toFixed(1)}h drawn across ${b.end - b.start + 1} day(s), inside ${a.hours}h/day capacity`,
+          `Qualified: ${(['canA', 'canR', 'canS'] as const).filter((k) => a[k]).map((k) => (k === 'canA' ? 'annotation' : k === 'canR' ? 'review' : 'secondary')).join(', ')} · ${a.seniority} · ${a.specialty.replace(/_/g, ' ')}`,
+          b.stage === 'A' && a.acc < 90 ? 'Accuracy discount applied — batch routed through paired review' : `Backlog reserve already deducted from ${a.name.split(' ')[0]}’s hours`,
+        ]
+        const perStruct = Math.max(1, Math.round(q.images / q.structures))
+        const structItems: string[] = []
+        for (let i = 0; i < Math.min(structs, 8); i++) structItems.push(`${q.line}-${String(i + 1).padStart(3, '0')} · ${perStruct} imgs`)
+        if (structs > 8) structItems.push('+' + (structs - 8) + ' more')
+        return {
+          key: b.key, req: b.req, imgsRaw: imgs, reqColor: REQ_COLORS[b.req],
+          analyst: a.name, reqLabel: 'Req ' + b.req + ' · ' + q.line, stageLabel: STAGE_NAMES[b.stage],
+          countLabel: imgs.toLocaleString() + ' imgs', structLabel: '~' + structs + ' structures',
+          reason: `${netRate.toFixed(1)} net img/hr puts ${a.name.split(' ')[0]} ${b.stage === 'A' ? 'among the fastest qualified annotators' : 'on the ' + STAGE_NAMES[b.stage].toLowerCase() + ' wave'} for this window · ${a.specialty === 'all' ? 'supervisor overflow' : a.specialty.replace(/_/g, ' ') + ' specialty'}.`,
+          window: days[b.start].label + (b.end > b.start ? ' – ' + days[b.end].label : ''),
+          whyOpen: exp === 'why', structsOpen: exp === 'structs',
+          whyBtn: exp === 'why' ? 'Hide math' : 'Why?', structsBtn: exp === 'structs' ? 'Hide structures' : 'Structures',
+          whyLines, structItems,
+          isPending, isResolved,
+          statusLabel: isAccepted ? '✓ Accepted' : 'Denied', statusColor: 'var(--sev-low)',
+          borderColor: isAccepted ? 'rgba(69, 208, 138, 0.45)' : 'var(--border)', opacity: 1,
+          accept: () => this.decide(b.key, true),
+          deny: () => this.decide(b.key, false),
+          toggleWhy: () => this.setState((st) => ({ expanded: { ...st.expanded, [b.key]: st.expanded[b.key] === 'why' ? null : 'why' } })),
+          toggleStructs: () => this.setState((st) => ({ expanded: { ...st.expanded, [b.key]: st.expanded[b.key] === 'structs' ? null : 'structs' } })),
+        }
+      })
     const pendingCount = batchRows.filter((b) => b.isPending).length
 
     // ---- Batch groups (by request) ----
@@ -537,24 +532,24 @@ export default class Dispatch extends React.Component<{}, State> {
     const ganttRows = !proposed
       ? []
       : this.analysts.filter((a) => a.canA || a.canR).map((a) => {
-          const ai = this.analysts.indexOf(a)
-          const cells = days.map((dy, d) => {
-            const maxH = Math.max(a.hours, 0.1)
-            const segs: { pct: string; color: string; title: string }[] = []
-            const res = r!.reserve[ai][d]
-            if (res > 0.1) segs.push({ pct: Math.min(100, (res / maxH) * 100).toFixed(0) + '%', color: BACKLOG_COLOR, title: 'Backlog: ' + res.toFixed(1) + 'h' })
-            const byReq: Record<string, number> = {}
-            r!.draws.forEach((dr) => { if (dr.aid === a.id && dr.day === d) byReq[dr.req] = (byReq[dr.req] || 0) + dr.hours })
-            Object.entries(byReq).forEach(([req, h]) => segs.push({ pct: Math.min(100, (h / maxH) * 100).toFixed(0) + '%', color: REQ_COLORS[req], title: 'Req ' + req + ': ' + h.toFixed(1) + 'h' }))
-            s.sessions.forEach((sn) => {
-              if (sn.day !== d || (sn.strugglerId !== a.id && sn.coachId !== a.id)) return
-              const other = this.aById(sn.strugglerId === a.id ? sn.coachId : sn.strugglerId)
-              segs.push({ pct: Math.min(100, (1 / maxH) * 100).toFixed(0) + '%', color: 'var(--volt-green)', title: 'Coaching session: 1h with ' + (other ? other.name : '') })
-            })
-            return { segs, bg: dy.isWeekend ? 'var(--surface-sunken)' : 'var(--surface-subtle)', title: a.name + ' · ' + dy.label }
+        const ai = this.analysts.indexOf(a)
+        const cells = days.map((dy, d) => {
+          const maxH = Math.max(a.hours, 0.1)
+          const segs: { pct: string; color: string; title: string }[] = []
+          const res = r!.reserve[ai][d]
+          if (res > 0.1) segs.push({ pct: Math.min(100, (res / maxH) * 100).toFixed(0) + '%', color: BACKLOG_COLOR, title: 'Backlog: ' + res.toFixed(1) + 'h' })
+          const byReq: Record<string, number> = {}
+          r!.draws.forEach((dr) => { if (dr.aid === a.id && dr.day === d) byReq[dr.req] = (byReq[dr.req] || 0) + dr.hours })
+          Object.entries(byReq).forEach(([req, h]) => segs.push({ pct: Math.min(100, (h / maxH) * 100).toFixed(0) + '%', color: REQ_COLORS[req], title: 'Req ' + req + ': ' + h.toFixed(1) + 'h' }))
+          s.sessions.forEach((sn) => {
+            if (sn.day !== d || (sn.strugglerId !== a.id && sn.coachId !== a.id)) return
+            const other = this.aById(sn.strugglerId === a.id ? sn.coachId : sn.strugglerId)
+            segs.push({ pct: Math.min(100, (1 / maxH) * 100).toFixed(0) + '%', color: 'var(--volt-green)', title: 'Coaching session: 1h with ' + (other ? other.name : '') })
           })
-          return { name: a.name, sub: (a.status === 'pto' ? 'PTO → Jul 16 · ' : '') + a.role + ' · ' + a.hours + 'h/day', cells }
+          return { segs, bg: dy.isWeekend ? 'var(--surface-sunken)' : 'var(--surface-subtle)', title: a.name + ' · ' + dy.label }
         })
+        return { name: a.name, sub: (a.status === 'pto' ? 'PTO → Jul 16 · ' : '') + a.role + ' · ' + a.hours + 'h/day', cells }
+      })
 
     // ---- Analyst board ----
     const boardCaption = proposed
@@ -667,19 +662,8 @@ export default class Dispatch extends React.Component<{}, State> {
         book: () => this.bookSession(c, chosen.a.id),
       })
     })
-    const focusId = pairRows.some((p) => p.id === s.coachFocus) ? s.coachFocus : pairRows[0] ? pairRows[0].id : null
-    const focusPair = pairRows.find((p) => p.id === focusId) || null
-    const focusList = pairRows.map((p) => ({
-      id: p.id, name: p.stName, initials: p.stInitials, tag: p.tag, tagBg: p.tagBg, tagColor: p.tagColor,
-      itemBg: p.id === focusId ? 'var(--surface-subtle)' : 'transparent',
-      itemBorder: p.id === focusId ? 'var(--cobalt-blue)' : 'var(--border)',
-      statusLabel: p.isScheduled ? 'Booked' : p.isAccepted ? 'Locked' : 'Review',
-      statusColor: p.isScheduled ? 'var(--sev-low)' : p.isAccepted ? 'var(--cobalt-blue)' : 'var(--fg-subtle)',
-      sel: () => this.setState({ coachFocus: p.id }),
-    }))
     const showCoachingSection = SHOW_COACHING && this.coaching.length > 0
     const coachCaption = 'Matching engine — strength in the weak metric · specialty overlap · timezone · spare capacity · max 3 pairs/week'
-    const layoutOptions: CoachingLayout[] = ['pairs', 'board', 'focus']
 
     // ---- Chat ----
     const messageRows = s.messages.map((m) => ({
@@ -691,7 +675,7 @@ export default class Dispatch extends React.Component<{}, State> {
     }))
     const presets: { kind: string; label: string }[] = []
     if (!s.intake) presets.push({ kind: 'intake', label: 'Here’s the incoming volume for the next two weeks (paste intake sheet)' })
-    else if (!proposed) presets.push({ kind: 'assign', label: totImg ? `${totImg.toLocaleString()} images land Jul 10–18 — schedule everything` : 'Schedule the incoming volume' })
+    else if (!proposed) presets.push({ kind: 'assign', label: totImg ? `Schedule everything` : 'Schedule the incoming volume' })
     else {
       if (!s.weekendOT) presets.push({ kind: 'ot', label: 'Authorize weekend overtime for the surge' })
       presets.push({ kind: 'risk', label: "What's at risk right now?" })
@@ -991,19 +975,12 @@ export default class Dispatch extends React.Component<{}, State> {
 
                 {s.coachOpen && (
                   <>
-                    {/* layout toggle */}
-                    <div style={{ display: 'flex', gap: 4, padding: 4, borderRadius: 999, background: 'var(--surface-subtle)', border: '1px solid var(--border)', alignSelf: 'flex-start' }}>
-                      {layoutOptions.map((lay) => (
-                        <button key={lay} onClick={() => this.setState({ coachingLayout: lay })} style={{ padding: '5px 16px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12, textTransform: 'capitalize', background: s.coachingLayout === lay ? 'var(--surface-elevated)' : 'transparent', color: s.coachingLayout === lay ? 'var(--fg)' : 'var(--fg-subtle)', fontWeight: s.coachingLayout === lay ? 500 : 400 }}>{lay}</button>
-                      ))}
-                    </div>
-
                     {pairRows.length === 0 && (
                       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 20px', fontSize: 13, color: 'var(--fg-muted)' }}>All coaching signals are resolved for this week — new pairings appear here if the daily history flags a trend.</div>
                     )}
 
-                    {/* Layout: pair cards */}
-                    {s.coachingLayout === 'pairs' && pairRows.length > 0 && (
+                    {/* Pair cards */}
+                    {pairRows.length > 0 && (
                       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }}>
                         {pairRows.map((p) => (
                           <div key={p.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 13, minWidth: 0 }}>
@@ -1044,89 +1021,6 @@ export default class Dispatch extends React.Component<{}, State> {
                             </div>
                           </div>
                         ))}
-                      </div>
-                    )}
-
-                    {/* Layout: match board */}
-                    {s.coachingLayout === 'board' && pairRows.length > 0 && (
-                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '210px 1fr 300px', gap: 14, padding: '10px 20px', borderBottom: '1px solid var(--border)', fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--fg-subtle)' }}>
-                          <span>NEEDS COACHING</span><span>SIGNAL · COACH MATCH</span><span style={{ textAlign: 'right' }}>SESSION</span>
-                        </div>
-                        {pairRows.map((p) => (
-                          <div key={p.id} style={{ display: 'grid', gridTemplateColumns: '210px 1fr 300px', gap: 14, padding: '14px 20px', borderBottom: '1px solid var(--border)', alignItems: 'start' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <div style={{ width: 32, height: 32, borderRadius: 999, background: p.stIconBg, color: p.stIconColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11.5, fontWeight: 500, flexShrink: 0 }}>{p.stInitials}</div>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
-                                <span style={{ fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap' }}>{p.stName}</span>
-                                <span style={{ padding: '2px 8px', borderRadius: 999, background: p.tagBg, color: p.tagColor, fontSize: 9.5, fontWeight: 600, letterSpacing: '0.05em', alignSelf: 'flex-start', whiteSpace: 'nowrap' }}>{p.tag}</span>
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
-                              <span style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--fg-muted)' }}>{p.note}</span>
-                              {p.canSwap && candidateSwap(p)}
-                              <span style={{ fontSize: 11.5, color: 'var(--fg-subtle)' }}>{p.why}</span>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
-                              <span style={{ padding: '2px 9px', borderRadius: 999, background: 'var(--icon-blue-bg)', color: 'var(--cobalt-blue)', fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap' }}>{p.fitLabel}</span>
-                              <span style={{ fontSize: 11, color: 'var(--fg-subtle)', textAlign: 'right' }}>{p.footNote}</span>
-                              {p.isPending && (
-                                <div style={{ display: 'flex', gap: 8 }}>
-                                  <button onClick={p.dismiss} className="dc-deny" style={{ padding: '6px 14px', borderRadius: 999, background: 'transparent', border: '1px solid var(--border-strong)', color: 'var(--fg-muted)', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12, cursor: 'pointer' }}>Dismiss</button>
-                                  <button onClick={p.accept} className="dc-volt" style={{ padding: '6px 14px', borderRadius: 999, background: 'var(--volt-green)', border: '1px solid var(--volt-green)', color: '#14110F', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Accept pair</button>
-                                </div>
-                              )}
-                              {p.isAccepted && (
-                                <button onClick={p.book} className="dc-volt" style={{ padding: '6px 14px', borderRadius: 999, background: 'var(--volt-green)', border: '1px solid var(--volt-green)', color: '#14110F', fontFamily: "'Instrument Sans', sans-serif", fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Book 1h session</button>
-                              )}
-                              {p.isScheduled && (
-                                <span style={{ padding: '4px 12px', borderRadius: 999, background: 'var(--sev-low-bg)', color: 'var(--sev-low)', fontSize: 11.5, fontWeight: 500 }}>{p.sessionLabel}</span>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Layout: focus queue */}
-                    {s.coachingLayout === 'focus' && pairRows.length > 0 && (
-                      <div style={{ display: 'grid', gridTemplateColumns: '265px 1fr', gap: 14, alignItems: 'start' }}>
-                        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {focusList.map((fl) => (
-                            <button key={fl.id} onClick={fl.sel} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, background: fl.itemBg, border: `1px solid ${fl.itemBorder}`, cursor: 'pointer', fontFamily: "'Instrument Sans', sans-serif", textAlign: 'left', color: 'var(--fg)' }}>
-                              <div style={{ width: 30, height: 30, borderRadius: 999, background: 'var(--surface-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 500, color: 'var(--fg-muted)', flexShrink: 0 }}>{fl.initials}</div>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: 1 }}>
-                                <span style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }}>{fl.name}</span>
-                                <span style={{ padding: '1px 7px', borderRadius: 999, background: fl.tagBg, color: fl.tagColor, fontSize: 9, fontWeight: 600, letterSpacing: '0.05em', alignSelf: 'flex-start', whiteSpace: 'nowrap' }}>{fl.tag}</span>
-                              </div>
-                              <span style={{ fontSize: 10.5, fontWeight: 500, color: fl.statusColor, flexShrink: 0 }}>{fl.statusLabel}</span>
-                            </button>
-                          ))}
-                        </div>
-                        {focusPair && (
-                          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                            <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--fg-muted)' }}>{focusPair.note}</div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                              <span style={{ fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--fg-subtle)' }}>RANKED COACHES</span>
-                              {focusPair.candRows.map((cr, i) => (
-                                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', border: `1px solid ${cr.rowBorder}`, borderRadius: 12, background: 'var(--app-bg)' }}>
-                                  <div style={{ width: 30, height: 30, borderRadius: 999, background: 'var(--icon-blue-bg)', color: 'var(--cobalt-blue)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 500, flexShrink: 0 }}>{cr.initials}</div>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
-                                    <span style={{ fontSize: 13, fontWeight: 500 }}>{cr.name}</span>
-                                    <span style={{ fontSize: 11.5, color: 'var(--fg-subtle)' }}>{cr.why}</span>
-                                  </div>
-                                  <span style={{ fontSize: 15, fontWeight: 500, color: 'var(--cobalt-blue)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{cr.fitLabel}</span>
-                                  {cr.isChosen && (<span style={{ padding: '3px 11px', borderRadius: 999, background: 'var(--icon-blue-bg)', color: 'var(--cobalt-blue)', fontSize: 11, fontWeight: 500, flexShrink: 0 }}>✓ Coach</span>)}
-                                  {cr.notChosen && (<button onClick={cr.assign} className="dc-chip" style={{ padding: '4px 12px', borderRadius: 999, background: 'transparent', border: '1px solid var(--border-strong)', color: 'var(--fg-muted)', fontFamily: "'Instrument Sans', sans-serif", fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>Make coach</button>)}
-                                </div>
-                              ))}
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <span style={{ fontSize: 11.5, color: 'var(--fg-subtle)' }}>{focusPair.footNote}</span>
-                              {pairActions(focusPair)}
-                            </div>
-                          </div>
-                        )}
                       </div>
                     )}
                   </>
